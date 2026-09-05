@@ -1,161 +1,226 @@
-import { Browser, BrowserContext, Page, Response } from 'playwright';
-import { EventEmitter } from 'events';
-import { IResourceAdapter } from '../types';
-import { ProxyManager } from '../network/ProxyManager';
-import { StealthContextBuilder } from '../network/StealthContextBuilder';
+import { Browser, BrowserContext, Page } from 'playwright';
+import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
+import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
+import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType } from '../types';
 
-export enum AnomalyType {
-  NETWORK_FAILURE = 'NETWORK_FAILURE',
-  RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
-  SESSION_CLOSED = 'SESSION_CLOSED',
-}
-
-export interface AnomalySignal {
-  type: AnomalyType;
-  status?: number;
-  url?: string;
-  timestamp: number;
-}
-
-export class PersistentStateEngine extends EventEmitter {
-  private adapter: IResourceAdapter;
-  private proxyManager?: ProxyManager;
-  private stealthBuilder?: StealthContextBuilder;
-  
+export class PersistentStateEngine {
   private context?: BrowserContext;
   private page?: Page;
-  private isRunning = false;
-  private rotating = false; // ChatGPT'nin önerdiği Race-Condition Kilidi
+  private currentProxyServer?: string;
+  private preservedState: PreservedSessionState = {
+    cookies: [],
+    localStorage: {},
+    sessionStorage: {}
+  };
+  private isRecovering = false;
 
   constructor(
-    adapter: IResourceAdapter,
-    proxyManager?: ProxyManager,
-    stealthBuilder?: StealthContextBuilder
+    private browser: Browser,
+    private proxyManager: AdvancedProxyManager,
+    private governor: AdaptiveGovernor
   ) {
-    super();
-    this.adapter = adapter;
-    this.proxyManager = proxyManager;
-    this.stealthBuilder = stealthBuilder;
+    this.bindGovernor();
   }
 
-  async start(): Promise<void> {
-    if (this.isRunning) return;
-    this.isRunning = true;
-    await this.createSession();
-  }
-
-  private async createSession(): Promise<void> {
-    const proxy = this.proxyManager ? this.proxyManager.getNextProxy() : undefined;
-
-    if (this.stealthBuilder) {
-      this.context = await this.stealthBuilder.createContext();
-    } else {
-      const { chromium } = await import('playwright');
-      const browser = await chromium.launch({ headless: true });
-      this.context = await browser.newContext({ proxy });
-    }
-
-    this.page = await this.context.newPage();
-    this.attachObservers(this.page);
-
-    const entrypoint = this.adapter.getEntrypoint();
-    await this.page.goto(entrypoint, { waitUntil: 'domcontentloaded' });
-  }
-
-  private attachObservers(page: Page): void {
-    // Sayfa Çökme / Kapanma Dinleyicileri
-    page.on('close', () => {
-      this.handleAnomaly({ type: AnomalyType.SESSION_CLOSED, timestamp: Date.now() });
+  private bindGovernor(): void {
+    this.governor.on('decision', async (event: GovernorDecisionEvent) => {
+      await this.handleGovernorDecision(event);
     });
+  }
 
-    // Ağ Yanıtı Dinleyicisi (Passive Telemetry)
-    page.on('response', async (response: Response) => {
-      const url = response.url();
-      const status = response.status();
+  public async initialize(): Promise<void> {
+    await this.createSessionWithFreshState(false);
+  }
 
-      if (status === 429 || status === 403) {
-        this.handleAnomaly({
-          type: AnomalyType.RATE_LIMIT_EXCEEDED,
-          status,
-          url,
-          timestamp: Date.now(),
-        });
-        return;
-      }
+  private async captureCurrentState(): Promise<void> {
+    if (!this.context || !this.page) return;
+    try {
+      const rawCookies = await this.context.cookies();
+      this.preservedState.cookies = rawCookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: c.expires,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite as 'Strict' | 'Lax' | 'None'
+      }));
 
-      const patterns = this.adapter.getMatchPatterns();
-      if (patterns.some((p) => url.includes(p))) {
-        try {
-          const body = await response.text();
-          const payload = this.adapter.parseNetworkPayload(url, body);
-          if (payload) {
-            this.emit('state', payload);
-          }
-        } catch {
-          // Yanıt gövdesi okunamadıysa sessizce geç
+      const storageData = await this.page.evaluate(() => {
+        const ls: Record<string, string> = {};
+        const ss: Record<string, string> = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key) ls[key] = localStorage.getItem(key) || '';
         }
-      }
-    });
-
-    // WebSocket Dinleyicisi
-    page.on('websocket', (ws) => {
-      ws.on('framereceived', (frame) => {
-        const payload = this.adapter.parseNetworkPayload(ws.url(), frame.payload.toString());
-        if (payload) {
-          this.emit('state', payload);
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key) ss[key] = sessionStorage.getItem(key) || '';
         }
+        return { ls, ss };
       });
-    });
+
+      this.preservedState.localStorage = storageData.ls;
+      this.preservedState.sessionStorage = storageData.ss;
+    } catch (error) {
+      console.warn('[PersistentStateEngine] State yakalama sırasında hata oluştu:', error);
+    }
   }
 
-  /**
-   * Safe Session Rotation (Kilitli Oturum Yenileme)
-   */
-  async rotateSession(failedProxyServer?: string): Promise<void> {
-    if (this.rotating) return; // Zaten rotasyon yapılıyorsa ikinci isteği engelle
-    this.rotating = true;
-
-    if (failedProxyServer && this.proxyManager) {
-      this.proxyManager.markFailed(failedProxyServer);
-    }
-
-    console.log('[ENGINE] Safe session rotation başlatılıyor...');
+  private async applyPreservedState(): Promise<void> {
+    if (!this.context || !this.page) return;
 
     try {
-      if (this.context) {
-        await this.context.close().catch(() => {});
-        this.context = undefined;
-        this.page = undefined;
+      if (this.preservedState.cookies.length > 0) {
+        await this.context.addCookies(this.preservedState.cookies);
       }
 
-      if (this.isRunning) {
-        await this.createSession();
-        console.log('[ENGINE] Yeni oturum başarıyla oluşturuldu.');
-      }
-    } finally {
-      this.rotating = false; // İşlem bitince kilidi kaldır
+      await this.page.addInitScript((state: { ls: Record<string, string>; ss: Record<string, string> }) => {
+        for (const [k, v] of Object.entries(state.ls)) {
+          localStorage.setItem(k, v);
+        }
+        for (const [k, v] of Object.entries(state.ss)) {
+          sessionStorage.setItem(k, v);
+        }
+      }, { ls: this.preservedState.localStorage, ss: this.preservedState.sessionStorage });
+    } catch (error) {
+      console.warn('[PersistentStateEngine] State re-hydration sırasında hata oluştu:', error);
     }
   }
 
-  private handleAnomaly(signal: AnomalySignal): void {
-    this.emit('anomaly', signal);
-    // Anomali yakalandığında güvenli rotasyonu tetikle
-    void this.rotateSession();
-  }
+  private async createSessionWithFreshState(preserve: boolean = true): Promise<void> {
+    if (preserve) {
+      await this.captureCurrentState();
+    }
 
-  async stop(): Promise<void> {
-    this.isRunning = false;
     if (this.context) {
-      await this.context.close();
-      this.context = undefined;
-      this.page = undefined;
+      await this.context.close().catch(() => {});
     }
-    if (this.stealthBuilder) {
-      await this.stealthBuilder.close();
+
+    const proxy = this.proxyManager.acquireProxy();
+    this.currentProxyServer = proxy.server;
+
+    const proxyOptions = proxy ? {
+      server: proxy.server,
+      username: proxy.username,
+      password: proxy.password
+    } : undefined;
+
+    this.context = await this.browser.newContext({
+      proxy: proxyOptions,
+      viewport: { width: 1920, height: 1080 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    });
+
+    await this.applyPreservedState();
+
+    this.page = await this.context.newPage();
+    this.attachLifecycleObservers(this.page);
+  }
+
+  private attachLifecycleObservers(page: Page): void {
+    page.on('response', (response) => {
+      const status = response.status();
+      const url = response.url();
+
+      if (status === 429) {
+        this.governor.enqueueAnomaly({
+          id: Math.random().toString(36).substring(7),
+          type: AnomalyType.HTTP_429,
+          statusCode: 429,
+          scope: AnomalyScope.SESSION,
+          sourceUrl: url,
+          timestamp: Date.now()
+        });
+      } else if (status === 403) {
+        this.governor.enqueueAnomaly({
+          id: Math.random().toString(36).substring(7),
+          type: AnomalyType.HTTP_403,
+          statusCode: 403,
+          scope: AnomalyScope.IP,
+          sourceUrl: url,
+          timestamp: Date.now()
+        });
+      }
+    });
+
+    page.on('crash', () => {
+      this.governor.enqueueAnomaly({
+        id: Math.random().toString(36).substring(7),
+        type: AnomalyType.PAGE_CRASH,
+        scope: AnomalyScope.INFRASTRUCTURE,
+        timestamp: Date.now()
+      });
+    });
+
+    page.on('requestfailed', (request) => {
+      const failure = request.failure();
+      if (failure && (failure.errorText.includes('net::ERR_') || failure.errorText.includes('DNS'))) {
+        this.governor.enqueueAnomaly({
+          id: Math.random().toString(36).substring(7),
+          type: AnomalyType.NETWORK_FAILURE,
+          scope: AnomalyScope.INFRASTRUCTURE,
+          sourceUrl: request.url(),
+          timestamp: Date.now(),
+          rawError: failure.errorText
+        });
+      }
+    });
+  }
+
+  private async handleGovernorDecision(event: GovernorDecisionEvent): Promise<void> {
+    if (this.isRecovering) return;
+    this.isRecovering = true;
+
+    try {
+      switch (event.action) {
+        case GovernorAction.THROTTLE:
+          console.log(`[PersistentStateEngine] Throttle uygulandı. Bekleniyor...`);
+          await new Promise(res => setTimeout(res, 10000));
+          break;
+
+        case GovernorAction.QUARANTINE_PROXY:
+          if (this.currentProxyServer) {
+            this.proxyManager.markFailed(this.currentProxyServer, 'HTTP_403');
+          }
+          await this.createSessionWithFreshState(true);
+          break;
+
+        case GovernorAction.ROTATE_SESSION_ONLY:
+          await this.createSessionWithFreshState(true);
+          break;
+
+        case GovernorAction.FULL_RECOVERY:
+          if (this.currentProxyServer) {
+            this.proxyManager.markFailed(this.currentProxyServer, 'NETWORK_FAIL');
+          }
+          this.preservedState = { cookies: [], localStorage: {}, sessionStorage: {} };
+          await this.createSessionWithFreshState(false);
+          break;
+
+        case GovernorAction.NO_ACTION:
+        default:
+          break;
+      }
+    } catch (error) {
+      console.error('[PersistentStateEngine] Recovery sırasında kritik hata:', error);
+    } finally {
+      this.isRecovering = false;
     }
   }
 
-  dispose(): void {
-    this.removeAllListeners();
+  public getPage(): Page | undefined {
+    return this.page;
+  }
+
+  public getContext(): BrowserContext | undefined {
+    return this.context;
+  }
+
+  public async close(): Promise<void> {
+    if (this.context) {
+      await this.context.close().catch(() => {});
+    }
   }
 }
