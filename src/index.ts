@@ -1,62 +1,77 @@
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { AdvancedProxyManager } from './network/AdvancedProxyManager';
+import { AdaptiveGovernor } from './engine/AdaptiveGovernor';
 import { PersistentStateEngine } from './engine/PersistentStateEngine';
-import { AdaptiveGovernor } from './governor/AdaptiveGovernor';
-// PrivateTargetAdapter sadece yerel ortamda bulunacak (.gitignore ile korunan dosya)
-import { PrivateTargetAdapter } from './adapters/PrivateTargetAdapter';
 
-async function bootstrap(): Promise<void> {
-  // 1. Modül Örneklerinin Oluşturulması
-  const adapter = new PrivateTargetAdapter();
-  const governor = new AdaptiveGovernor();
+export * from './types';
+export { AdvancedProxyManager } from './network/AdvancedProxyManager';
+export { AdaptiveGovernor } from './engine/AdaptiveGovernor';
+export { PersistentStateEngine } from './engine/PersistentStateEngine';
 
-  // 2. Engine Yapılandırması:
-  // Fallback Polling tamamen kapatıldı (enableFallbackPolling: false).
-  // Sistem sadece pasif ağ trafiği (XHR/WS) ve DOM MutationObserver ile çalışır.
-  const engine = new PersistentStateEngine(adapter, undefined, {
-    enableFallbackPolling: false,
-  });
-
-  // 3. Karar Mekanizması Bağlantısı (Single Source of Truth)
-  // Engine sadece bir sensör gibi anomalileri yakalar ve Governor'a bildirir.
-  engine.on('anomaly', (anomaly) => {
-    governor.recordAnomaly(anomaly);
-    const evaluation = governor.evaluate();
-
-    if (!evaluation.allowed) {
-      console.warn(
-        `[GOVERNOR] Durum: ${evaluation.state}. Sistem duraklatıldı. ` +
-        `Yeniden deneme süresi: ${evaluation.waitMs} ms`
-      );
-    }
-  });
-
-  // 4. Başarılı Durum Yakalama Bağlantısı
-  engine.on('state', (payload) => {
-    governor.recordSuccess();
-    console.log('[STATE_DISCOVERED]', {
-      id: payload.id,
-      source: payload.source,
-      confidence: payload.confidenceScore,
-      timestamp: payload.timestamp,
-    });
-  });
-
-  // 5. Motorun Başlatılması
-  console.log('[SYSTEM_START] State Synchronization Engine başlatılıyor...');
-  await engine.start();
-
-  // Process sonlandırma sinyallerini yakalama (Graceful Shutdown)
-  const shutdown = async () => {
-    console.log('[SYSTEM_STOP] Sistem kapatılıyor...');
-    await engine.stop();
-    engine.dispose();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+export interface EngineFactoryOptions {
+  proxies?: Array<{ server: string; username?: string; password?: string }>;
+  headless?: boolean;
 }
 
-bootstrap().catch((error) => {
-  console.error('[CRITICAL_ERROR] Engine başlatılamadı:', error);
-  process.exit(1);
-});
+export class EngineFactory {
+  public static async createProductionEngine(options: EngineFactoryOptions = {}): Promise<{
+    browser: Browser;
+    proxyManager: AdvancedProxyManager;
+    governor: AdaptiveGovernor;
+    engine: PersistentStateEngine;
+  }> {
+    const proxyManager = new AdvancedProxyManager(options.proxies || []);
+    const governor = new AdaptiveGovernor();
+    
+    const browser = await chromium.launch({
+      headless: options.headless ?? false,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-setuid-sandbox'
+      ]
+    });
+
+    const engine = new PersistentStateEngine(browser, proxyManager, governor);
+    await engine.initialize();
+
+    return {
+      browser,
+      proxyManager,
+      governor,
+      engine
+    };
+  }
+}
+
+if (require.main === module) {
+  (async () => {
+    console.log('[Main Entry] Endüstriyel Resilient Session Engine başlatılıyor...');
+    try {
+      const { browser, engine } = await EngineFactory.createProductionEngine({
+        headless: false,
+        proxies: [
+          {
+            server: 'http://brd.superproxy.io:22225',
+            username: 'brd-customer-xxxx-zone-residential',
+            password: 'your_password'
+          }
+        ]
+      });
+
+      const page = engine.getPage();
+      if (page) {
+        await page.goto('https://bot.sannysoft.com/', { waitUntil: 'networkidle' });
+        console.log('[Main Entry] Hedef sayfa yüklendi ve motor aktif olarak izlemede.');
+        
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+      }
+
+      await engine.close();
+      await browser.close();
+      console.log('[Main Entry] Oturum başarıyla sonlandırıldı.');
+    } catch (error) {
+      console.error('[Main Entry] Kritik hata:', error);
+    }
+  })();
+}
