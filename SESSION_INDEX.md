@@ -10,31 +10,29 @@
 
 ## ⚡ ANLIK DURUM
 
-- **Session:** 1
-- **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde — bu session'da #36 eklendi)
+- **Session:** 1 (kapatıldı)
+- **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - Madde #1: dosya taşıma yapıldı. **Kapsam düzeltildi:** kullanıcının GitHub
-    ekran görüntüsü root'ta ayrıca `ProxyManager.ts` ve `StealthContextBuilder.ts`
-    olduğunu ortaya çıkardı (ilk taramada gözden kaçmıştı — ZIP'te bunlar
-    yalnızca `src/network/` altında görülmüştü, ayrıca root kopyaları da
-    varmış). Diff ile doğrulandı: bu ikisi `src/network/` sürümleriyle
-    birebir aynı (Governor/StateEngine'deki gibi farklılaşma yok). Toplam
-    6 dosya `legacy/`'ye taşındı: `AdaptiveGovernor.ts`,
-    `PersistentStateEngine.ts`, `IResourceAdapter.ts`, `IStateObserver.ts`,
-    `ProxyManager.ts`, `StealthContextBuilder.ts`. Kullanıcı taşımayı kendi
-    ortamında manuel yapacak — henüz doğrulanmadı.
-  - Madde #5: `AdvancedProxyManager.ts`'e lease mekanizması eklendi
-    (`acquireProxy(sessionId): ProxyLease`, `releaseProxy(leaseId)`,
-    expired-lease reclaim). **Breaking change, legacy imza tutulmadı**
-    (kullanıcı kararı: "Kararı sen ver").
-  - 🔴 **BİLİNEN KIRIK DURUM:** `src/engine/PersistentStateEngine.ts:101`
-    hâlâ eski `acquireProxy()` imzasını (parametresiz, `ProxyMetrics` dönen)
-    çağırıyor → repo şu an **type-check'ten geçmiyor**. Entegrasyon
-    (PersistentStateEngine'in yeni lease API'sine geçirilmesi) Kural 5
-    gereği ayrı bir KARAR BİLDİRİMİ olarak bekliyor, sıradaki iş bu.
-- **Sıradaki öncelik:** Madde #5 entegrasyonu — `PersistentStateEngine.ts`'i
-  yeni `ProxyLease` API'sine geçirmek (repo'yu tekrar derlenir hale getirmek
-  için bu, #23'ten önce gelmeli).
+  - Madde #1: dosya taşıma yapıldı (6 dosya `legacy/`'ye taşındı). Kullanıcı
+    doğrulaması hâlâ bekleniyor.
+  - Madde #5: network tarafı (Session öncesi `AdvancedProxyManager.ts` lease
+    mekanizması) ve engine tarafı (`PersistentStateEngine.ts` entegrasyonu,
+    bu session'da yapıldı) **kod tarafı tamam**. `currentProxyServer` →
+    `currentLease: ProxyLease`, acquire/release sırası, `getProxyMetrics()`
+    ile credential lookup, `close()`'da lease release eklendi.
+    🔴 **doğrulanmadı:** kullanıcı kendi ortamında `tsc --noEmit` çalıştırmadı
+    — repo'nun artık gerçekten derlendiği iddiası henüz teyitsiz.
+  - Madde #6: `AdaptiveGovernor.ts`'te `processQueue()` artık her decision'ı
+    (`emitDecisionAndWait()` ile) gerçekten bekleyip sıradaki kuyruk
+    elemanına öyle geçiyor — "ikinci anomaly `isRecovering=true` iken
+    kaybolur" bug'ı kaynağında kapatıldı. **Kod tarafı tamam**, kullanıcı
+    çalışma zamanı doğrulaması (gerçek proxy ile bir recovery senaryosu
+    tetiklenip tek decision'ın işlendiğinin gözlemlenmesi) bekleniyor.
+- **Sıradaki öncelik:** Madde #7 (Governor↔RecoveryExecutor command
+  interface) — Madde #6'nın çözdüğü sıralama artık var, ama emit/listener
+  deseni hâlâ örtük; #8 (recovery transaction) buna bağımlı olduğu için
+  önce #7'ye bakılması öneriliyor. Kesin karar bir sonraki session'da
+  kullanıcıyla birlikte verilecek.
 
 ---
 
@@ -42,10 +40,10 @@
 
 | # | Madde | Katman | Durum |
 |---|---|---|---|
-| 1 | Çift implementasyonların kaldırılması (root vs src) | mimari | kod tarafı tamam (6 dosya legacy/'ye taşındı — kapsam kullanıcı ekran görüntüsüyle düzeltildi), kullanıcı doğrulaması bekleniyor |
-| 5 | Proxy lease mekanizması (AVAILABLE→LEASED→IN_USE→RELEASED) | network | network tarafı tamam (AdvancedProxyManager), engine entegrasyonu (PersistentStateEngine) açık — repo şu an bu yüzden derlenmiyor |
-| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | açık |
-| 7 | Governor↔RecoveryExecutor command interface | engine | açık |
+| 1 | Çift implementasyonların kaldırılması (root vs src) | mimari | kod tarafı tamam, kullanıcı doğrulaması bekleniyor |
+| 5 | Proxy lease mekanizması (AVAILABLE→LEASED→IN_USE→RELEASED) | network/engine | kod tarafı tamam (network + engine entegrasyonu), kullanıcı derleme doğrulaması bekleniyor |
+| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam (Governor artık decision'ları sıralı/awaited işliyor), kullanıcı çalışma zamanı doğrulaması bekleniyor |
+| 7 | Governor↔RecoveryExecutor command interface | engine | açık — sıradaki öncelik |
 | 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | açık |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
@@ -84,7 +82,7 @@
 | 26 | Health/readiness endpoint | engine |
 | 30 | Test piramidi kurulumu | test |
 | 31 | State integrity testleri | test |
-| 32 | Session identity / generation modeli | engine |
+| 32 | Session identity / generation modeli | engine — Madde #5 entegrasyonunda geçici `sessionId` üretimi eklendi (`Math.random().toString(36)`), gerçek model hâlâ burada ele alınacak |
 | 34 | BrowserContextFactory standardizasyonu | network |
 | 36 | Legacy governor backoff modelinin #3/#6'ya referans olarak değerlendirilmesi | network/engine |
 
@@ -93,8 +91,13 @@
 ## 📌 KRİTİK TEKNİK KARARLAR
 
 - Production kod SADECE `src/` altına yazılacak; kök dizindeki eski dosyalar
-  artık `legacy/` klasöründe (Madde #1, Session 1'de taşındı) — silinmedi,
-  referans amaçlı tutuluyor (bkz. Madde #36).
+  `legacy/` klasöründe (Madde #1, Session 1'de taşındı) — silinmedi, referans
+  amaçlı tutuluyor (bkz. Madde #36).
+- Madde #5 entegrasyonunda proxy acquisition fail olursa "eski lease zaten
+  bırakılmış olur" riski bilinçli olarak kapsam dışı bırakıldı — Madde #8
+  (recovery transaction modeli) bunu tam çözecek.
+- Madde #6'da listener hatası `Promise.allSettled` ile izole edildi — tek bir
+  hatalı decision handling'i tüm kuyruğu durdurmuyor.
 - Persistent proxy store için backend seçimi (Redis vs SQLite vs PostgreSQL)
   henüz kullanıcıya soruLMADI — #2 tetiklendiğinde CORE.md §3 üzerinden sorulacak.
 - Secret yönetimi için SecretProvider'ın hangi kaynaktan besleneceği
@@ -107,9 +110,18 @@
 - **Madde #1** (Session 1): Root `AdaptiveGovernor.ts`, `PersistentStateEngine.ts`,
   `IResourceAdapter.ts`, `IStateObserver.ts` → `legacy/` klasörüne taşındı.
   `src/index.ts`'in zaten yalnızca `src/` import ettiği doğrulandı (davranış
-  değişikliği yok). Root governor'daki cooldown/backoff tasarımı silinmeden
-  Madde #36 olarak kayda geçti. **Not: kod tarafı tamam, "kapandı" statüsü
-  kullanıcının repo'yu kendi ortamında doğrulamasıyla kesinleşecek.**
+  değişikliği yok). **Not: kod tarafı tamam, "kapandı" statüsü kullanıcının
+  repo'yu kendi ortamında doğrulamasıyla kesinleşecek.**
+- **Madde #5 — engine entegrasyonu** (Session 1): `PersistentStateEngine.ts`
+  yeni `ProxyLease` API'sine geçirildi (`currentProxyServer` → `currentLease`,
+  sabit `sessionId`, acquire/release sırası, `getProxyMetrics()` ile credential
+  lookup, `close()`'da lease release). **Not: kod tarafı tamam, kullanıcının
+  `tsc --noEmit` ile derleme doğrulaması bekleniyor.**
+- **Madde #6** (Session 1): `AdaptiveGovernor.processQueue()` artık her
+  decision'ı `emitDecisionAndWait()` ile bekleyip öyle bir sonrakine geçiyor;
+  "ikinci anomaly kaybolur" bug'ı kaynağında kapatıldı. **Not: kod tarafı
+  tamam, kullanıcının çalışma zamanında (gerçek recovery senaryosu ile)
+  doğrulaması bekleniyor.**
 
 ---
 
