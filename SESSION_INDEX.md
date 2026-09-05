@@ -10,29 +10,21 @@
 
 ## ⚡ ANLIK DURUM
 
-- **Session:** 1 (kapatıldı)
+- **Session:** 2 (devam ediyor)
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - Madde #1: dosya taşıma yapıldı (6 dosya `legacy/`'ye taşındı). Kullanıcı
+  - Madde #1: kod tarafı tamam (6 dosya `legacy/`'ye taşındı), kullanıcı
     doğrulaması hâlâ bekleniyor.
-  - Madde #5: network tarafı (Session öncesi `AdvancedProxyManager.ts` lease
-    mekanizması) ve engine tarafı (`PersistentStateEngine.ts` entegrasyonu,
-    bu session'da yapıldı) **kod tarafı tamam**. `currentProxyServer` →
-    `currentLease: ProxyLease`, acquire/release sırası, `getProxyMetrics()`
-    ile credential lookup, `close()`'da lease release eklendi.
-    🔴 **doğrulanmadı:** kullanıcı kendi ortamında `tsc --noEmit` çalıştırmadı
-    — repo'nun artık gerçekten derlendiği iddiası henüz teyitsiz.
-  - Madde #6: `AdaptiveGovernor.ts`'te `processQueue()` artık her decision'ı
-    (`emitDecisionAndWait()` ile) gerçekten bekleyip sıradaki kuyruk
-    elemanına öyle geçiyor — "ikinci anomaly `isRecovering=true` iken
-    kaybolur" bug'ı kaynağında kapatıldı. **Kod tarafı tamam**, kullanıcı
-    çalışma zamanı doğrulaması (gerçek proxy ile bir recovery senaryosu
-    tetiklenip tek decision'ın işlendiğinin gözlemlenmesi) bekleniyor.
+  - Madde #5: **kapandı.** Kullanıcı kendi Codespace ortamında `tsconfig.json`
+    ekleyip `npx tsc --noEmit` çalıştırdı — sıfır hata, temiz çıktı. Bilinen
+    "repo derlenmiyor" durumu gerçek kanıtla kapatıldı.
+  - Madde #6: kod tarafı tamam + **derleme doğrulandı** (aynı `tsc --noEmit`
+    çalıştırması). **Runtime doğrulaması hâlâ bekliyor** — derleme,
+    concurrency düzeltmesinin (ikinci anomaly'nin artık kaybolmadığının)
+    gerçekten çalıştığını göstermez; bunun için gerçek bir anomaly/recovery
+    senaryosu tetiklenmesi gerekiyor. Bu yüzden madde henüz kapatılmadı.
 - **Sıradaki öncelik:** Madde #7 (Governor↔RecoveryExecutor command
-  interface) — Madde #6'nın çözdüğü sıralama artık var, ama emit/listener
-  deseni hâlâ örtük; #8 (recovery transaction) buna bağımlı olduğu için
-  önce #7'ye bakılması öneriliyor. Kesin karar bir sonraki session'da
-  kullanıcıyla birlikte verilecek.
+  interface).
 
 ---
 
@@ -41,8 +33,7 @@
 | # | Madde | Katman | Durum |
 |---|---|---|---|
 | 1 | Çift implementasyonların kaldırılması (root vs src) | mimari | kod tarafı tamam, kullanıcı doğrulaması bekleniyor |
-| 5 | Proxy lease mekanizması (AVAILABLE→LEASED→IN_USE→RELEASED) | network/engine | kod tarafı tamam (network + engine entegrasyonu), kullanıcı derleme doğrulaması bekleniyor |
-| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam (Governor artık decision'ları sıralı/awaited işliyor), kullanıcı çalışma zamanı doğrulaması bekleniyor |
+| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı (`tsc --noEmit` temiz), runtime doğrulaması bekleniyor |
 | 7 | Governor↔RecoveryExecutor command interface | engine | açık — sıradaki öncelik |
 | 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | açık |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
@@ -93,9 +84,10 @@
 - Production kod SADECE `src/` altına yazılacak; kök dizindeki eski dosyalar
   `legacy/` klasöründe (Madde #1, Session 1'de taşındı) — silinmedi, referans
   amaçlı tutuluyor (bkz. Madde #36).
-- Madde #5 entegrasyonunda proxy acquisition fail olursa "eski lease zaten
-  bırakılmış olur" riski bilinçli olarak kapsam dışı bırakıldı — Madde #8
-  (recovery transaction modeli) bunu tam çözecek.
+- Repo kökünde `tsconfig.json` yoktu — Session 2'de eklendi (`target: ES2020`,
+  `module: CommonJS`, `strict: true`, `skipLibCheck: true`, `legacy/` ve test
+  dosyaları `exclude`'da). Bu, 36 maddenin önkoşulu olan bir altyapı ekiydi,
+  ayrı bir madde numarası almadı.
 - Madde #6'da listener hatası `Promise.allSettled` ile izole edildi — tek bir
   hatalı decision handling'i tüm kuyruğu durdurmuyor.
 - Persistent proxy store için backend seçimi (Redis vs SQLite vs PostgreSQL)
@@ -109,19 +101,19 @@
 
 - **Madde #1** (Session 1): Root `AdaptiveGovernor.ts`, `PersistentStateEngine.ts`,
   `IResourceAdapter.ts`, `IStateObserver.ts` → `legacy/` klasörüne taşındı.
-  `src/index.ts`'in zaten yalnızca `src/` import ettiği doğrulandı (davranış
-  değişikliği yok). **Not: kod tarafı tamam, "kapandı" statüsü kullanıcının
-  repo'yu kendi ortamında doğrulamasıyla kesinleşecek.**
-- **Madde #5 — engine entegrasyonu** (Session 1): `PersistentStateEngine.ts`
-  yeni `ProxyLease` API'sine geçirildi (`currentProxyServer` → `currentLease`,
-  sabit `sessionId`, acquire/release sırası, `getProxyMetrics()` ile credential
-  lookup, `close()`'da lease release). **Not: kod tarafı tamam, kullanıcının
-  `tsc --noEmit` ile derleme doğrulaması bekleniyor.**
-- **Madde #6** (Session 1): `AdaptiveGovernor.processQueue()` artık her
-  decision'ı `emitDecisionAndWait()` ile bekleyip öyle bir sonrakine geçiyor;
-  "ikinci anomaly kaybolur" bug'ı kaynağında kapatıldı. **Not: kod tarafı
-  tamam, kullanıcının çalışma zamanında (gerçek recovery senaryosu ile)
-  doğrulaması bekleniyor.**
+  **Not: kod tarafı tamam, "kapandı" statüsü kullanıcının repo'yu kendi
+  ortamında doğrulamasıyla kesinleşecek.**
+- **Madde #5** (Session 1 kod, Session 2 doğrulama — **KAPANDI**):
+  `PersistentStateEngine.ts` yeni `ProxyLease` API'sine geçirildi
+  (`currentProxyServer` → `currentLease`, sabit `sessionId`, acquire/release
+  sırası, `getProxyMetrics()` ile credential lookup, `close()`'da lease
+  release). Kullanıcı Session 2'de `tsconfig.json` ekleyip `npx tsc --noEmit`
+  çalıştırdı — temiz geçti. Repo artık gerçekten derleniyor, kanıtlandı.
+- **Madde #6** (Session 1 kod, Session 2 derleme doğrulaması): `AdaptiveGovernor
+  .processQueue()` artık her decision'ı `emitDecisionAndWait()` ile bekleyip
+  öyle bir sonrakine geçiyor. Derleme temiz geçti ama **runtime doğrulaması
+  hâlâ açık** — concurrency düzeltmesi ancak gerçek bir anomaly/recovery
+  senaryosuyla gözlemlenebilir, bu yüzden madde kapatılmadı.
 
 ---
 
@@ -129,6 +121,9 @@
 
 - "Kod yazıldı" ile "kullanıcı gerçekten kullanabiliyor" ayrı doğrulama
   noktalarıdır — bir madde sadece kod üretildi diye kapatılmaz.
+- Derleme (`tsc --noEmit`) başarısı da tek başına yeterli değildir — sadece
+  tip hatası olmadığını kanıtlar, çalışma zamanı davranışını (özellikle
+  concurrency/timing bug'larını) kanıtlamaz; ikisi ayrı kapanış koşuludur.
 - Checkpoint/onay gelmeden sohbet kesilme riski varsa madde açık kalmaya
   devam eder; bir sonraki session'da SESSION_INDEX üzerinden kaldığı yerden
   devam edilir, "sonra eklenecek" notuyla kapanış yapılmaz.
