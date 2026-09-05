@@ -6,19 +6,23 @@
 // Risk:    Bu dosya bozulursa iki anomaly'nin decision'ı üst üste (aynı anda)
 //          işlenebilir — downstream tüketici (örn. PersistentStateEngine)
 //          hâlâ önceki recovery'i sürdürürken ikinci decision'ı da işlemeye
-//          çalışabilir, ya da bir listener hatası tüm kuyruğu durdurabilir.
+//          çalışabilir, ya da bir listener/port hatası tüm kuyruğu durdurabilir.
 // Dokunma: `.on('decision', ...)` ile kayıt yapan her tüketici (şu an yalnızca
-//          src/engine/PersistentStateEngine.ts) — public event sözleşmesi
-//          (GovernorDecisionEvent) değişmedi, yalnızca kuyruk işleme sırası
-//          artık listener'ların promise'lerini gerçekten bekliyor.
+//          src/engine/PersistentStateEngine.ts — bu tur onu KIRMIYOR, ama
+//          Madde #7'nin asıl hedefi olan RecoveryCommandPort'u henüz
+//          implement ETMİYOR, bu ayrı bir KARAR BİLDİRİMİ) ve yeni
+//          RecoveryCommandPort tüketicileri (constructor'a enjekte edilir).
+//          governor-command.types.ts'teki tip varsayımlarına bağımlı.
 
 import { EventEmitter } from 'events';
-import { SemanticAnomaly, GovernorAction, AnomalyScope, AnomalyType } from '../types';
-
-export interface GovernorDecisionEvent {
-  anomaly: SemanticAnomaly;
-  action: GovernorAction;
-}
+import {
+  SemanticAnomaly,
+  GovernorAction,
+  AnomalyScope,
+  AnomalyType,
+  GovernorDecisionEvent,
+  RecoveryCommandPort,
+} from '../types';
 
 type DecisionListener = (event: GovernorDecisionEvent) => void | Promise<void>;
 
@@ -27,12 +31,24 @@ export class AdaptiveGovernor extends EventEmitter {
   private isProcessing = false;
   private duplicateWindowMs = 2000; // Aynı anomali tipi için coalesce penceresi
 
+  /**
+   * Madde #7 Çözümü: Ham `.on('decision', ...)` yerine, opsiyonel olarak
+   * enjekte edilen tip-güvenli bir command port. Sağlanmışsa, her karar
+   * bu port üzerinden de (legacy listener'larla birlikte, aynı
+   * Promise.allSettled turunda) beklenir. Bu turda eski emit yolu
+   * KALDIRILMADI — PersistentStateEngine henüz bu portu implement etmiyor
+   * (görülmedi), o migrasyon ayrı bir KARAR BİLDİRİMİ.
+   */
+  constructor(private readonly commandPort?: RecoveryCommandPort) {
+    super();
+  }
+
   public enqueueAnomaly(anomaly: SemanticAnomaly): void {
     // Madde 9 Çözümü: Anomaly queue / coalescing ile duplicate sinyalleri ve re-entrant riskini önle
     const isDuplicate = this.queue.some(
-      (existing) => 
-        existing.type === anomaly.type && 
-        existing.scope === anomaly.scope && 
+      (existing) =>
+        existing.type === anomaly.type &&
+        existing.scope === anomaly.scope &&
         (anomaly.timestamp - existing.timestamp) < this.duplicateWindowMs
     );
 
@@ -58,8 +74,9 @@ export class AdaptiveGovernor extends EventEmitter {
         // handling'i (örn. context/proxy rotasyonu) bitmeden bir sonraki
         // kuyruk elemanı işlenmeye başlıyor ve tüketici tarafındaki kilit
         // (isRecovering) ikinci decision'ı sessizce düşürüyordu. Burada
-        // kayıtlı listener'lar manuel çağrılıp gerçekten bekleniyor —
-        // kuyruk artık gerçek anlamda sıralı (serial) işleniyor.
+        // kayıtlı listener'lar VE (varsa) commandPort manuel çağrılıp
+        // gerçekten bekleniyor — kuyruk artık gerçek anlamda sıralı
+        // (serial) işleniyor.
         await this.emitDecisionAndWait(decision);
       }
     } finally {
@@ -69,17 +86,26 @@ export class AdaptiveGovernor extends EventEmitter {
 
   private async emitDecisionAndWait(decision: GovernorDecisionEvent): Promise<void> {
     const listeners = this.listeners('decision') as DecisionListener[];
-    if (listeners.length === 0) return;
 
-    const results = await Promise.allSettled(
-      listeners.map((listener) => Promise.resolve().then(() => listener(decision)))
+    const tasks: Promise<void>[] = listeners.map((listener) =>
+      Promise.resolve().then(() => listener(decision))
     );
+
+    // Madde #7 Çözümü: Resmi, tip-güvenli command port — sağlanmışsa
+    // legacy listener'larla aynı turda, aynı disiplinle beklenir.
+    if (this.commandPort) {
+      tasks.push(this.commandPort.handleDecision(decision));
+    }
+
+    if (tasks.length === 0) return;
+
+    const results = await Promise.allSettled(tasks);
 
     for (const result of results) {
       if (result.status === 'rejected') {
-        // Bir listener'ın hatası kuyruğun geri kalanını durdurmamalı —
+        // Bir listener/port'un hatası kuyruğun geri kalanını durdurmamalı —
         // sahte "başarılı" varsayılmıyor, hata görünür şekilde loglanıyor.
-        console.error('[AdaptiveGovernor] "decision" listener hata fırlattı:', result.reason);
+        console.error('[AdaptiveGovernor] decision handling hata fırlattı:', result.reason);
       }
     }
   }
