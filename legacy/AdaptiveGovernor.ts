@@ -24,6 +24,12 @@ import {
   RecoveryCommandPort,
 } from '../types';
 
+// Geriye dönük uyumluluk: PersistentStateEngine.ts bu tipi hâlâ
+// `import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor'`
+// şeklinde alıyor. Gerçek tanım artık '../types'ta (merkezi kaynak), burada
+// sadece re-export ediyoruz — iki kaynak yok, tek kaynak + iki erişim yolu.
+export type { GovernorDecisionEvent, RecoveryCommandPort };
+
 type DecisionListener = (event: GovernorDecisionEvent) => void | Promise<void>;
 
 export class AdaptiveGovernor extends EventEmitter {
