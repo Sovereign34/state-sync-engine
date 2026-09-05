@@ -1,3 +1,17 @@
+// AdaptiveGovernor.ts
+// Amaç:    Gelen semantic anomaly'leri kuyruğa alır, dedupe/coalesce eder,
+//          her biri için bir aksiyon kararı üretir ve bu kararın downstream
+//          handling'i tamamlanana kadar bir sonraki kuyruk elemanına geçmez.
+// Katman:  engine
+// Risk:    Bu dosya bozulursa iki anomaly'nin decision'ı üst üste (aynı anda)
+//          işlenebilir — downstream tüketici (örn. PersistentStateEngine)
+//          hâlâ önceki recovery'i sürdürürken ikinci decision'ı da işlemeye
+//          çalışabilir, ya da bir listener hatası tüm kuyruğu durdurabilir.
+// Dokunma: `.on('decision', ...)` ile kayıt yapan her tüketici (şu an yalnızca
+//          src/engine/PersistentStateEngine.ts) — public event sözleşmesi
+//          (GovernorDecisionEvent) değişmedi, yalnızca kuyruk işleme sırası
+//          artık listener'ların promise'lerini gerçekten bekliyor.
+
 import { EventEmitter } from 'events';
 import { SemanticAnomaly, GovernorAction, AnomalyScope, AnomalyType } from '../types';
 
@@ -5,6 +19,8 @@ export interface GovernorDecisionEvent {
   anomaly: SemanticAnomaly;
   action: GovernorAction;
 }
+
+type DecisionListener = (event: GovernorDecisionEvent) => void | Promise<void>;
 
 export class AdaptiveGovernor extends EventEmitter {
   private queue: SemanticAnomaly[] = [];
@@ -30,15 +46,42 @@ export class AdaptiveGovernor extends EventEmitter {
     if (this.isProcessing || this.queue.length === 0) return;
     this.isProcessing = true;
 
-    while (this.queue.length > 0) {
-      const anomaly = this.queue.shift()!;
-      const action = this.evaluatePolicy(anomaly);
+    try {
+      while (this.queue.length > 0) {
+        const anomaly = this.queue.shift()!;
+        const action = this.evaluatePolicy(anomaly);
 
-      const decision: GovernorDecisionEvent = { anomaly, action };
-      this.emit('decision', decision);
+        const decision: GovernorDecisionEvent = { anomaly, action };
+
+        // Madde 6 Çözümü: emit() fire-and-forget olduğu ve listener'ların
+        // promise'lerini beklemediği için, bir önceki decision'ın downstream
+        // handling'i (örn. context/proxy rotasyonu) bitmeden bir sonraki
+        // kuyruk elemanı işlenmeye başlıyor ve tüketici tarafındaki kilit
+        // (isRecovering) ikinci decision'ı sessizce düşürüyordu. Burada
+        // kayıtlı listener'lar manuel çağrılıp gerçekten bekleniyor —
+        // kuyruk artık gerçek anlamda sıralı (serial) işleniyor.
+        await this.emitDecisionAndWait(decision);
+      }
+    } finally {
+      this.isProcessing = false;
     }
+  }
 
-    this.isProcessing = false;
+  private async emitDecisionAndWait(decision: GovernorDecisionEvent): Promise<void> {
+    const listeners = this.listeners('decision') as DecisionListener[];
+    if (listeners.length === 0) return;
+
+    const results = await Promise.allSettled(
+      listeners.map((listener) => Promise.resolve().then(() => listener(decision)))
+    );
+
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        // Bir listener'ın hatası kuyruğun geri kalanını durdurmamalı —
+        // sahte "başarılı" varsayılmıyor, hata görünür şekilde loglanıyor.
+        console.error('[AdaptiveGovernor] "decision" listener hata fırlattı:', result.reason);
+      }
+    }
   }
 
   private evaluatePolicy(anomaly: SemanticAnomaly): GovernorAction {
