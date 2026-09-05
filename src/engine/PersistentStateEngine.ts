@@ -2,6 +2,7 @@ import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
 import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType } from '../types';
+import { getAdvancedFingerprintScript } from '../utils/fingerprint';
 
 export class PersistentStateEngine {
   private context?: BrowserContext;
@@ -113,6 +114,9 @@ export class PersistentStateEngine {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     });
 
+    // Gelişmiş parmak izi maskelemesini her yeni context/sayfaya enjekte et
+    await this.context.addInitScript(getAdvancedFingerprintScript());
+
     await this.applyPreservedState();
 
     this.page = await this.context.newPage();
@@ -176,7 +180,6 @@ export class PersistentStateEngine {
     try {
       switch (event.action) {
         case GovernorAction.THROTTLE:
-          console.log(`[PersistentStateEngine] Throttle uygulandı. Bekleniyor...`);
           await new Promise(res => setTimeout(res, 10000));
           break;
 
