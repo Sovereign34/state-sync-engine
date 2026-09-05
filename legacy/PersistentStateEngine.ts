@@ -1,12 +1,26 @@
+// PersistentStateEngine.ts
+// Amaç:    Browser context/page yaşam döngüsünü, proxy lease alımını ve
+//          cookie/localStorage/sessionStorage state sürekliliğini yönetir.
+// Katman:  engine
+// Risk:    Lease hiç release edilmezse proxy havuzu zamanla tükenir (leak);
+//          getProxyMetrics() bilinmeyen bir proxyId için undefined dönerse
+//          context proxy'siz (fail-open) kurulur.
+// Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
+//          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
+//          ProxyLease şekli.
+
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
-import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType } from '../types';
+import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType, ProxyLease } from '../types';
 
 export class PersistentStateEngine {
   private context?: BrowserContext;
   private page?: Page;
-  private currentProxyServer?: string;
+  private currentLease?: ProxyLease;
+  // Madde #32 (session identity modeli) ayrıca ele alınacak; bu, acquireProxy(sessionId)
+  // için gereken minimum değer — kod tabanındaki mevcut ID üretim tarzıyla tutarlı.
+  private readonly sessionId: string = Math.random().toString(36).substring(2, 15);
   private preservedState: PreservedSessionState = {
     cookies: [],
     localStorage: {},
@@ -98,13 +112,31 @@ export class PersistentStateEngine {
       await this.context.close().catch(() => {});
     }
 
-    const proxy = this.proxyManager.acquireProxy();
-    this.currentProxyServer = proxy.server;
+    // Eski lease varsa yeni proxy alınmadan önce bırakılır (Madde #5).
+    // Not: acquireProxy() burada fail olursa eski lease zaten release edilmiş
+    // olur — bu risk kapsam dışı bırakıldı, Madde #8 (recovery transaction
+    // modeli) bunu tam çözecek.
+    if (this.currentLease) {
+      this.proxyManager.releaseProxy(this.currentLease.leaseId);
+      this.currentLease = undefined;
+    }
 
-    const proxyOptions = proxy ? {
-      server: proxy.server,
-      username: proxy.username,
-      password: proxy.password
+    const lease = this.proxyManager.acquireProxy(this.sessionId);
+    this.currentLease = lease;
+
+    const metrics = this.proxyManager.getProxyMetrics(lease.proxyId);
+    if (!metrics) {
+      // Sahte veri/sessiz fallback yasak (Madde 22) — bu durum context'in
+      // proxy'siz kurulacağı anlamına gelir, sessizce geçilmez.
+      console.warn(
+        `[PersistentStateEngine] Lease alındı (proxyId=${lease.proxyId}) ama getProxyMetrics() sonuç döndürmedi — context proxy'siz kurulacak.`
+      );
+    }
+
+    const proxyOptions = metrics ? {
+      server: metrics.server,
+      username: metrics.username,
+      password: metrics.password
     } : undefined;
 
     this.context = await this.browser.newContext({
@@ -181,8 +213,8 @@ export class PersistentStateEngine {
           break;
 
         case GovernorAction.QUARANTINE_PROXY:
-          if (this.currentProxyServer) {
-            this.proxyManager.markFailed(this.currentProxyServer, 'HTTP_403');
+          if (this.currentLease) {
+            this.proxyManager.markFailed(this.currentLease.proxyId, 'HTTP_403');
           }
           await this.createSessionWithFreshState(true);
           break;
@@ -192,8 +224,8 @@ export class PersistentStateEngine {
           break;
 
         case GovernorAction.FULL_RECOVERY:
-          if (this.currentProxyServer) {
-            this.proxyManager.markFailed(this.currentProxyServer, 'NETWORK_FAIL');
+          if (this.currentLease) {
+            this.proxyManager.markFailed(this.currentLease.proxyId, 'NETWORK_FAIL');
           }
           this.preservedState = { cookies: [], localStorage: {}, sessionStorage: {} };
           await this.createSessionWithFreshState(false);
@@ -221,6 +253,10 @@ export class PersistentStateEngine {
   public async close(): Promise<void> {
     if (this.context) {
       await this.context.close().catch(() => {});
+    }
+    if (this.currentLease) {
+      this.proxyManager.releaseProxy(this.currentLease.leaseId);
+      this.currentLease = undefined;
     }
   }
 }
