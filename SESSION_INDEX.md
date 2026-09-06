@@ -94,11 +94,39 @@
     `http429Count` 0→1); `npx tsc --noEmit` → 0 hata. Madde P0 tablosunda
     AÇIK kalmaya devam ediyor — diğer `GovernorAction` türleri için
     instrumentation bağlantısı bu turda kapsanmadı.
+  - **(Yeni) Madde #22 — `recordSuccess` köprüsü (başarı yolu): kod
+    tarafında MEVCUT olduğu doğrulandı, runtime doğrulaması HENÜZ YOK.**
+    Bir önceki turda `recordSuccess`'in kapsam dışı olduğu söylenmişti; bu
+    iddia yanlıştı (muhtemelen eski dosya başlığındaki bir nottan
+    kaynaklandı — bkz. ⚠️ DERSLER, "dosya başlığındaki eski not" maddesi,
+    aynı hata kalıbının tekrarı). Bu turda doğrulandı: `handleObserverState`
+    kodda mevcut (satır 426), `attachLifecycleObservers` içinde bağlı
+    (satır 340). Kayıt düzeltildi: **`recordSuccess` kapsam dışı DEĞİL,
+    kodda.**
+    - `npx tsc --noEmit` temiz olması sadece "derleniyor" demek —
+      `recordSuccess`'in fiilen çağrıldığı **runtime'da** henüz
+      gözlemlenmedi. Mevcut `runtime-check.ts` bunu test etmiyor (o script
+      THROTTLE/QUARANTINE/ROTATE için mock kullanıyor; `response.ok()`/
+      `timing()` başarı senaryosu YOK).
+    - **Kullanıcıdan yanıt bekleniyor** — iki seçenek sunuldu, hangisiyle
+      devam edileceği netleşmeden runtime doğrulaması yapılmadı:
+      1. Yeni bir mock testi (`runtime-check-recordsuccess.ts` — mock
+         `Response` nesnesi `status()=200`/`ok()=true`, `request().timing()
+         .responseEnd` geçerli bir sayı; `recordSuccess`'in çağrıldığını VE
+         geçersiz/negatif `responseEnd` durumunda çağrılMADIĞINI doğrulayan
+         2 assertion) — Claude yazar, kullanıcı çalıştırır.
+      2. Gerçek ortamda bir proxy üzerinden gerçek sayfa açılıp
+         `getProxyMetrics()`'in `successCount`/`latencyMs` alanlarının
+         değiştiği gözlemlenir.
+    - Bu madde KAPANMADI — sadece "kod var mı" sorusu netleşti, "runtime'da
+      çalışıyor mu" sorusu hâlâ açık.
   - Madde #13: Session 2'den değişmedi.
 - **Sıradaki öncelik:** Madde #22'nin THROTTLE/ROTATE_SESSION_ONLY
   alt-kapsamı kapandığı için sırada iki seçenek var: (a) #22'nin kalan
   `GovernorAction` türleri için instrumentation bağlantısı, (b) #13
-  credential encryption. Kullanıcıdan teyit bekleniyor.
+  credential encryption. Buna ek olarak #22'nin `recordSuccess` köprüsü için
+  yukarıdaki iki test seçeneğinden hangisiyle ilerleneceği de netleşmeli.
+  Kullanıcıdan teyit bekleniyor.
 
 ---
 
@@ -111,6 +139,17 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
+- **(Yeni) Madde #22 `recordSuccess` runtime doğrulama yöntemi:** yukarıdaki
+  ⚡ ANLIK DURUM'da açıklanan iki seçenekten (mock testi vs. gerçek ortam
+  testi) hangisiyle ilerlenecek, yoksa ikisi birden mi yapılacak —
+  **kullanıcıdan yanıt bekleniyor.**
+- **(Yeni) `PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
+  uygulandı mı?** Bir önceki turda debug-log'u temizlenmiş bir
+  `PersistentStateEngine.ts` verilmişti; bu turda bunun repo'ya fiilen
+  uygulanıp uygulanmadığı (yoksa hâlâ eski debug'lı sürümün mü çalıştığı)
+  soruldu. **Kullanıcıdan yanıt bekleniyor** — netleşmeden bu dosyanın
+  güncel durumu hakkında "uygulandı" varsayımı yapılmayacak (bkz. ⚠️
+  DERSLER, "niyet beyanı ile gerçekleşmiş sonuç arasındaki fark" maddesi).
 
 ---
 
@@ -120,7 +159,7 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); diğer `GovernorAction` türleri için instrumentation bağlantısı henüz kapsanmadı |
+| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR olduğu doğrulandı (satır 426/340) ama runtime doğrulaması henüz yapılmadı** — yöntem seçimi kullanıcıdan bekleniyor (bkz. Cevap Bekleyen Sorular); diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -184,7 +223,10 @@
   catch bloğundaki `enqueueAnomaly(...)` çağrısı `queueMicrotask(() => ...)`
   ile ertelendi — senkron re-entrancy zincirinin `isRecovering` guard'ını
   atlamasını önlemek için (Madde #9 kapsamı). Runtime'da doğrulandı; ayrıntı
-  için yukarıdaki ⚡ ANLIK DURUM.
+  için yukarıdaki ⚡ ANLIK DURUM. **Bu turda soruldu ama henüz teyit edilmedi:**
+  debug-log'u temizlenmiş sürümün repo'ya fiilen uygulanıp uygulanmadığı
+  (bkz. Cevap Bekleyen Sorular) — teyit gelmeden bu satır "uygulandı" olarak
+  güncellenmeyecek.
 - **(Yeni — Session 3, kullanıcı onaylı)** Madde #9'un gerçek entegrasyon
   testi (mock'suz Playwright + gerçek/local auth server ile cookie-restore-
   ama-authenticate-olmadı senaryosu) **projenin sonuna ertelendi**.
@@ -293,7 +335,13 @@
   dosyada, aynı sızıntıya sahip ikinci bir metod daha var") için gerçek
   tüketici kodu görülmeden onay istemek riskli — dosya başlığındaki eski
   bir not güncel gerçeği yansıtmayabilir, genişletme onayı SADECE gerçek
-  kod görüldükten sonra istenmeli.
+  kod görüldükten sonra istenmeli. **(Doğrulanan tekrar — bu turda)** aynı
+  kalıp ters yönde de gerçekleşti: `recordSuccess`'in "kapsam dışı" olduğu
+  iddiası da eski bir dosya başlığı notuna dayanıyordu ve yanlıştı — gerçek
+  kod (`handleObserverState`, satır 426/340) görülünce düzeltildi. Ders
+  ikiye katlandı: dosya başlığı notu ne "genişletme" ne de "daraltma"
+  yönünde tek başına yeterli kanıt değildir, her iki yönde de gerçek koda
+  bakılmalı.
 - **(Yeni — Session 3)** Bir hata durumunu (ağ/DNS hatası) başka bir hata
   durumuyla (gerçek "unauthenticated" pattern eşleşmesi) aynı dönüş
   değerine (`false`) sıkıştırmak, ikisini birbirinden ayırt edilemez hale
@@ -323,6 +371,13 @@
   geçilmemeli. Bu proje TypeScript/Node tabanlı olduğu için sürüm
   uyumsuzlukları tekrar edebilir — bu nedenle not projeye genel, tek bir
   kullanıcının ortamına özgü değil.
+- **(Yeni — Session 3)** "Derleniyor" (`tsc --noEmit` temiz) ile "runtime'da
+  fiilen çağrılıyor" arasındaki fark tek bir maddeye özgü değil, tekrar eden
+  bir kalıp: Madde #22'nin `markFailed` köprüsünde runtime-check ile
+  kapatıldı, `recordSuccess` köprüsünde ise henüz sadece kod-varlığı
+  doğrulandı — aynı maddenin iki alt-kapsamı bile farklı doğrulama
+  seviyelerinde olabilir, "madde #22 çalışıyor" gibi genellemeler yasak;
+  hangi alt-kapsamın hangi seviyede doğrulandığı ayrı ayrı izlenmeli.
 
 ---
 
@@ -331,6 +386,9 @@ eklenmesiyle dosya önce 400 satır eşiğine yaklaşacaktı (Kural #11); bunu
 önlemek için en eski iki kapanmış girdi (Süreç dışı `authValidator` wiring
 bug'ı + Madde #33 alt-adımı) `session_arşiv.md`'ye (Taşıma 2) TAM olarak
 taşındı — hiçbir şey özetlenmedi/silinmedi, ayrıntı için o dosya.
-SESSION_INDEX.md şimdi **335 satırdır** — sadece en yeni kapanış (Madde #22
-alt-kapsamı) burada kalıyor; henüz açık maddeler (P0/P1/P2) ve anlık durum
-değişmeden korunuyor.*
+SESSION_INDEX.md bu turda `recordSuccess` bulgusu ve iki yeni açık soru
+eklenmesiyle satır sayısı arttı; 400 satır eşiği bu turda AŞILMADI (dosya
+hâlâ eşiğin altında), bu nedenle ek bir arşivleme yapılmadı. Açık maddeler
+(P0/P1/P2) ve anlık durum değişmeden korunuyor; Madde #22 P0 tablosunda
+AÇIK, `recordSuccess` alt-kapsamı için runtime doğrulama yöntemi kullanıcı
+onayı bekliyor.*
