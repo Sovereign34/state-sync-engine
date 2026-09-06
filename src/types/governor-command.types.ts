@@ -3,26 +3,37 @@
 //          domain tiplerinin merkezi kaynagi + Madde #7 icin
 //          RecoveryCommandPort sozlesmesi.
 // Katman:  types
-// Risk:    Bu dosya src/types/index.ts'in TEK icerigidir - burada yanlis bir
+// Risk:    src/types/index.ts bu dosyayi VE (Madde #9 ile birlikte)
+//          auth-validation.types.ts'i re-export eder - burada yanlis bir
 //          alan/enum degeri, PersistentStateEngine.ts / AdvancedProxyManager.ts
 //          ile derleme zamaninda uyusmazlik yaratir (Madde 22 - sessiz fallback
 //          yasak, hata gorunur olmali).
-// Dokunma: AdaptiveGovernor.ts (tuketici + GovernorDecisionEvent re-export),
-//          PersistentStateEngine.ts (tuketici), AdvancedProxyManager.ts (ProxyLease/
-//          ProxyMetrics tuketicisi).
+// Dokunma: AdaptiveGovernor.ts (tuketici + GovernorDecisionEvent re-export;
+//          Madde #9 ile AUTH_VALIDATION_FAILED icin yeni bir evaluatePolicy
+//          case'i eklendi), PersistentStateEngine.ts (tuketici, Madde #9 ile
+//          handleGovernorDecision'in catch'inde bu tipi enqueue ediyor),
+//          AdvancedProxyManager.ts (ProxyLease/ProxyMetrics tuketicisi),
+//          auth-validation.types.ts (bu dosyadaki PreservedSessionState'i
+//          AuthValidationPort imzasinda kullanir).
 //
 // KAYNAK: Bu tanimlar artik VARSAYIM degil - src/engine/PersistentStateEngine.ts'in
 // tam icerigi (attachLifecycleObservers, createSessionWithFreshState, handleGovernorDecision)
 // grep/cat ile dogrulanarak cikarildi. ProxyMetrics alanlari (server/username/password)
 // PersistentStateEngine.ts'teki `metrics.server/username/password` kullanimindan
-// cikarildi - AdvancedProxyManager.ts'in TAMAMI henuz gorulmedi, bu tek acik nokta.
+// cikarildi - AdvancedProxyManager.ts'in TAMAMI goruldu (asagida DOGRULANDI notu
+// guncellendi).
 
 /**
- * DOGRULANDI (PersistentStateEngine.ts attachLifecycleObservers): sadece bu
- * dort deger tetikleniyor. CHALLENGE_DETECTED / WEBSOCKET_DISCONNECT,
- * AdaptiveGovernor.ts'in evaluatePolicy() switch-case'inde referans aliniyor
- * ama PersistentStateEngine.ts'te henuz hicbir yerde enqueue edilmiyor -
- * yine de policy tarafinda kullanildigi icin tipte kaliyor.
+ * DOGRULANDI (PersistentStateEngine.ts attachLifecycleObservers): HTTP_429,
+ * HTTP_403, PAGE_CRASH, NETWORK_FAILURE bu dosyanin dort orijinal enqueue
+ * noktasi. CHALLENGE_DETECTED / WEBSOCKET_DISCONNECT, AdaptiveGovernor.ts'in
+ * evaluatePolicy() switch-case'inde referans aliniyor ama PersistentStateEngine.ts'te
+ * henuz hicbir yerde enqueue edilmiyor - yine de policy tarafinda kullanildigi
+ * icin tipte kaliyor.
+ * Madde #9 (bu tur) - AUTH_VALIDATION_FAILED eklendi: attachLifecycleObservers'daki
+ * dort cagridan FARKLI bir tetikleme noktasi var - handleGovernorDecision'in
+ * catch blogunda, createSessionWithFreshState() bir AuthRestoreFailedError
+ * firlattiginda enqueue ediliyor (bkz. auth-validation.types.ts).
  */
 export enum AnomalyType {
   HTTP_429 = 'HTTP_429',
@@ -31,12 +42,17 @@ export enum AnomalyType {
   NETWORK_FAILURE = 'NETWORK_FAILURE',
   CHALLENGE_DETECTED = 'CHALLENGE_DETECTED',
   WEBSOCKET_DISCONNECT = 'WEBSOCKET_DISCONNECT',
+  AUTH_VALIDATION_FAILED = 'AUTH_VALIDATION_FAILED',
 }
 
 /**
  * DOGRULANDI (PersistentStateEngine.ts): HTTP_429 -> SESSION, HTTP_403 -> IP,
  * PAGE_CRASH/NETWORK_FAILURE -> INFRASTRUCTURE. Onceki varsayimim (PROXY/GLOBAL)
- * YANLISTI, kaldirildi.
+ * YANLISTI, kaldirildi. AUTH_VALIDATION_FAILED (Madde #9) -> SESSION verildi
+ * (HTTP_429 ile ayni mantik: sorun tek bir session'in state'inde, IP/proxy'de
+ * degil) - evaluatePolicy'de bu tip icin ayri, scope'tan bagimsiz bir case
+ * oldugundan bu deger politikayi degistirmez, sadece SemanticAnomaly'yi
+ * anlamli sekilde doldurur.
  */
 export enum AnomalyScope {
   SESSION = 'SESSION',
@@ -46,9 +62,11 @@ export enum AnomalyScope {
 
 /**
  * DOGRULANDI (PersistentStateEngine.ts attachLifecycleObservers - dort
- * enqueueAnomaly() cagrisinin tamami): id/type/scope/timestamp her zaman var;
- * statusCode sadece HTTP_429/HTTP_403'te, sourceUrl PAGE_CRASH haric hepsinde,
- * rawError sadece NETWORK_FAILURE'da dolduruluyor - bu yuzden hepsi opsiyonel.
+ * enqueueAnomaly() cagrisinin tamami, artik bes - handleGovernorDecision'daki
+ * besinci enqueueAnomaly cagrisi Madde #9 ile eklendi): id/type/scope/timestamp
+ * her zaman var; statusCode sadece HTTP_429/HTTP_403'te, sourceUrl PAGE_CRASH
+ * haric hepsinde, rawError NETWORK_FAILURE'da VE (Madde #9 ile) AUTH_VALIDATION_FAILED'da
+ * (AuthRestoreFailedError.message) dolduruluyor - bu yuzden hepsi opsiyonel.
  */
 export interface SemanticAnomaly {
   id: string;
@@ -63,7 +81,9 @@ export interface SemanticAnomaly {
 
 /**
  * DOGRULANDI (PersistentStateEngine.ts evaluatePolicy tuketimi + handleGovernorDecision
- * switch-case) - degerler daha once de doğruydu, degisiklik yok.
+ * switch-case) - degerler daha once de doğruydu, degisiklik yok. Madde #9,
+ * AUTH_VALIDATION_FAILED'i FULL_RECOVERY'e yonlendiriyor - burada yeni bir
+ * GovernorAction degeri EKLENMEDI, sadece evaluatePolicy'de yeni bir case.
  */
 export enum GovernorAction {
   ROTATE_SESSION_ONLY = 'ROTATE_SESSION_ONLY',
