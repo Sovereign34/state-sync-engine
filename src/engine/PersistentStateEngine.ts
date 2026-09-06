@@ -38,10 +38,20 @@
 //          bir onay/tur gerektirir, bu KARAR BİLDİRİMİ'nin kapsamı dışıdır.
 //          DAVRANIŞ DEĞİŞİKLİĞİ (Madde #8'den, değişmedi): proxy release
 //          sırası "acquire yeni → release eski" (önceden tersiydi).
+// (Madde #33 — ilk adım, bu tur) attachLifecycleObservers(): 429/403 tespiti
+//          artık ham page.on('response', ...) DEĞİL, IStateObserver sözleşmesini
+//          implement eden PlaywrightPageObserver (adapters/PlaywrightPageObserver.ts)
+//          üzerinden geliyor. Bu metod artık ham Playwright event'ini görmüyor,
+//          sadece AnomalyPayload → SemanticAnomaly ÇEVİRİSİNİ yapıyor
+//          (translateObserverAnomaly). crash/requestfailed BİLİNÇLİ OLARAK
+//          taşınmadı — bkz. PlaywrightPageObserver.ts başlığı (IStateObserver'ın
+//          AnomalyType'ında bu ikisi için lossless karşılık yok).
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
+import { PlaywrightPageObserver } from '../adapters/PlaywrightPageObserver';
+import { AnomalyPayload } from '../adapters/IStateObserver';
 import {
   PreservedSessionState,
   GovernorAction,
@@ -294,31 +304,17 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   }
 
   private attachLifecycleObservers(page: Page): void {
-    page.on('response', (response) => {
-      const status = response.status();
-      const url = response.url();
+    // Madde #33 (ilk adım): 429/403 artık ham page.on('response', ...)
+    // yerine IStateObserver sözleşmesi üzerinden geliyor — bu metod artık
+    // ham Playwright event'ini görmüyor, sadece çeviriyi yapıyor.
+    const observer = new PlaywrightPageObserver(page);
+    observer.on('anomaly', (payload) => this.translateObserverAnomaly(payload));
+    observer.start();
 
-      if (status === 429) {
-        this.governor.enqueueAnomaly({
-          id: Math.random().toString(36).substring(7),
-          type: AnomalyType.HTTP_429,
-          statusCode: 429,
-          scope: AnomalyScope.SESSION,
-          sourceUrl: url,
-          timestamp: Date.now()
-        });
-      } else if (status === 403) {
-        this.governor.enqueueAnomaly({
-          id: Math.random().toString(36).substring(7),
-          type: AnomalyType.HTTP_403,
-          statusCode: 403,
-          scope: AnomalyScope.IP,
-          sourceUrl: url,
-          timestamp: Date.now()
-        });
-      }
-    });
-
+    // BİLİNÇLİ OLARAK TAŞINMADI (bkz. PlaywrightPageObserver.ts başlığı):
+    // IStateObserver.AnomalyType'ta 'crash' ve DNS/network hatası için
+    // lossless bir karşılık yok — bu iki sinyal hâlâ ham Playwright event'i
+    // olarak, doğrudan enqueueAnomaly() çağırıyor.
     page.on('crash', () => {
       this.governor.enqueueAnomaly({
         id: Math.random().toString(36).substring(7),
@@ -340,6 +336,50 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           rawError: failure.errorText
         });
       }
+    });
+  }
+
+  /**
+   * Madde #33 (ilk adım): PlaywrightPageObserver'ın (IStateObserver
+   * implementasyonu) 'anomaly' event'ini, governor'ın beklediği
+   * SemanticAnomaly'ye çevirir. Bu, iki farklı AnomalyType enum'unu
+   * (IStateObserver'ınki vs governor-command.types.ts'teki) birbirine
+   * eşleyen TEK, açık yer — örtük/dağınık bir eşleme yok.
+   */
+  private translateObserverAnomaly(payload: AnomalyPayload): void {
+    let type: AnomalyType;
+    let scope: AnomalyScope;
+
+    switch (payload.type) {
+      case 'RATE_LIMIT_EXCEEDED':
+        type = AnomalyType.HTTP_429;
+        scope = AnomalyScope.SESSION;
+        break;
+      case 'ACCESS_RESTRICTED':
+        type = AnomalyType.HTTP_403;
+        scope = AnomalyScope.IP;
+        break;
+      default:
+        // SESSION_EXPIRED / CHALLENGE_DETECTED: PlaywrightPageObserver bu
+        // turda bunları hiç emit ETMİYOR (bkz. kendi başlığı) — ama
+        // IStateObserver jenerik bir sözleşme olduğu için ileride başka bir
+        // observer bunları emit edebilir. O durumda sessizce yutmak Madde 22
+        // ihlali olur — açıkça logla, hiçbir şey enqueue etme.
+        console.warn(
+          `[PersistentStateEngine] PlaywrightPageObserver'dan beklenmeyen/henüz eşlenmemiş anomaly type: ${payload.type} — enqueue edilmedi.`
+        );
+        return;
+    }
+
+    const sourceUrl = typeof payload.details?.sourceUrl === 'string' ? payload.details.sourceUrl : undefined;
+
+    this.governor.enqueueAnomaly({
+      id: Math.random().toString(36).substring(7),
+      type,
+      scope,
+      statusCode: payload.statusCode,
+      sourceUrl,
+      timestamp: new Date(payload.timestamp).getTime()
     });
   }
 
