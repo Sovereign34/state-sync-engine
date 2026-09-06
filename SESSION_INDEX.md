@@ -79,8 +79,8 @@
     kapsamını genişletirken (`getAllMetrics()`'ten `getProxyMetrics()`'e)
     gerçek tüketici kodu görülmeden onay istenmemeliydi.
   - Madde #13, #22, #33: Session 2'den değişmedi.
-  - **Süreç dışı, numarasız `authValidator` wiring bug'ı — DERLEME-DOĞRULAMALI
-    KAPANDI, runtime doğrulaması bekliyor:** `src/index.ts`'te
+  - **Süreç dışı, numarasız `authValidator` wiring bug'ı — TAM KAPANDI
+    (Session 3, derleme + runtime doğrulaması):** `src/index.ts`'te
     `EngineFactoryOptions`'a zorunlu bir `authValidator: { validationUrl,
     unauthenticatedUrlPatterns, navigationTimeoutMs? }` alanı eklendi;
     `createProductionEngine()` bundan bir `DefaultAuthValidator` kurup
@@ -89,18 +89,31 @@
     zamanında reddediliyor (sessiz fallback yok, kullanıcı kararı). Demo
     bloğuna (`require.main === module`) gerçek panel/login URL'lerinin yerine
     açıkça `// TODO` etiketli placeholder'lar eklendi (uydurulmadı).
-    Doğrulama: `npx tsc --noEmit` boş çıktı verdi ("Found 0 errors" — hem bu
-    hem Madde #23'ün credential hataları kapandı, ekran görüntüsüyle teyit
-    edildi). **Sınır:** bu sadece derleme doğrulaması; `DefaultAuthValidator`'ın
-    gerçek bir login akışına karşı runtime'da doğru çalıştığı (placeholder
-    URL'ler gerçek değerlerle değiştirildikten sonra) henüz test edilmedi —
-    projenin kendi dersi gereği ("tsc başarısı tek başına yeterli değil") bu
-    madde "tam kapandı" sayılmıyor.
-- **Sıradaki öncelik:** Madde #9 ertelendiği, #23 kapandığı ve `authValidator`
-  wiring'i derleme-doğrulamalı olduğu için sırada üç seçenek var: (a)
-  `authValidator` wiring'inin runtime doğrulaması (gerçek URL'lerle), (b) #13
-  credential encryption, (c) #22 telemetry↔metrics bağlantısı. Kullanıcıdan
-  teyit bekleniyor.
+    **Runtime doğrulaması sırasında (`runtime-check-authvalidator.ts`, ilk
+    sürüm) kullanıcının verdiği `validationUrl`'in örnek/placeholder
+    (`app.hedef-portal.com`) olduğu ve Codespace'ten DNS çözülemediği ortaya
+    çıktı — bu da `DefaultAuthValidator`'ın o anki hâlinde GERÇEK bir kusuru
+    açığa çıkardı:** ağ/DNS hatası ile "sayfaya ulaşıldı ama login'e
+    yönlendirildi" (gerçek unauthenticated) durumu, ikisi de sessizce `false`
+    dönerek AYIRT EDİLEMİYORDU. Kullanıcı kararıyla `AuthValidationNetworkError`
+    (yeni, `auth-validation.types.ts`) eklendi; `DefaultAuthValidator.validate()`
+    artık ağ/DNS/timeout hatasında VE `!response.ok()` durumunda bu hatayı
+    fırlatıyor — `false`/`true` SADECE sayfaya gerçekten ulaşılıp
+    `unauthenticatedUrlPatterns` değerlendirilebildiğinde dönüyor.
+    Doğrulama: `npx tsc --noEmit` → "0 hata"; `runtime-check-authvalidator-v2.ts`
+    → **Test A** (çözümlenemeyen domain → artık `false` değil,
+    `AuthValidationNetworkError` throw ediyor, `instanceof` ile teyitli) ve
+    **Test B** (gerçek erişilebilir bir hedef — GitHub'ın oturum gerektiren bir
+    sayfası, cookie yok → gerçekten login'e düşüp `false` dönüyor) — ikisi de
+    ekran görüntüsüyle "✅ Tüm testler geçti" teyit edildi. **Sınır:** Test B
+    kullanıcının KENDİ production `validationUrl`/pattern'lerini doğrulamıyor
+    (o hâlâ gerçek değerler verildiğinde ayrıca yapılmalı) — sadece
+    `DefaultAuthValidator`'ın davranışının (ağ hatası ≠ unauthenticated pattern
+    eşleşmesi) düzeldiğini kanıtlıyor.
+- **Sıradaki öncelik:** Madde #9 ertelendiği, #23 ve `authValidator` wiring'i
+  (+ bulunan `AuthValidationNetworkError` regresyonu) tam kapandığı için sırada
+  iki seçenek var: (a) #13 credential encryption, (b) #22 telemetry↔metrics
+  bağlantısı. Kullanıcıdan teyit bekleniyor.
 
 ---
 
@@ -212,6 +225,15 @@
   `unauthenticatedUrlPatterns` gerçek panel/login URL'leri DEĞİL, açıkça
   `// TODO` etiketli placeholder — production'a alınmadan gerçek değerlerle
   değiştirilmeli.
+- **(Yeni — Session 3)** `DefaultAuthValidator.validate()`: ağ/DNS/timeout
+  hatası (`page.goto()` throw) ve beklenmeyen HTTP yanıtı (`!response.ok()`)
+  artık `AuthValidationNetworkError` (yeni, `auth-validation.types.ts`)
+  fırlatıyor — `false`/`true` SADECE hedef sayfaya gerçekten ulaşılıp
+  `unauthenticatedUrlPatterns` değerlendirilebildiğinde dönüyor. Bu hata,
+  `PersistentStateEngine`'in genel rollback `catch`'i tarafından yakalanıyor
+  ama (kasıtlı olarak) `AuthRestoreFailedError` gibi özel bir
+  `AUTH_VALIDATION_FAILED` anomaly'si TETİKLEMİYOR — ağ hatası, auth hatası
+  değildir. `PersistentStateEngine.ts`'e bu ayrım için ayrıca dokunulmadı.
 - Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
 - Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
 
@@ -278,6 +300,25 @@
   `getProxyMetrics()`'e) gerçek tüketici kodu (`PersistentStateEngine.ts`)
   görülmeden onay istenmemeliydi — dosya başlığındaki eski bir not
   ("tek tüketici `acquireProxy()` kullanıyor") yanıltıcı çıktı.
+- **Süreç dışı `authValidator` wiring bug'ı + `AuthValidationNetworkError`
+  fix'i — TAM KAPANDI (Session 3, derleme + runtime + push doğrulaması):**
+  `index.ts`'teki composition-root wiring'i (`EngineFactoryOptions.authValidator`
+  zorunlu alan, `DefaultAuthValidator` DI) tamamlandı. Runtime doğrulaması
+  sırasında kullanıcının verdiği `validationUrl`'in placeholder olduğu ortaya
+  çıktı; bu da `DefaultAuthValidator`'ın ağ/DNS hatasını "unauthenticated"
+  (`false`) ile karıştırdığı GERÇEK bir kusuru açığa çıkardı. Kullanıcı
+  kararıyla yeni `AuthValidationNetworkError` eklendi — `false`/`true` artık
+  SADECE sayfaya gerçekten ulaşılıp pattern değerlendirilebildiğinde dönüyor.
+  Doğrulama: `tsc --noEmit` → 0 hata; `runtime-check-authvalidator-v2.ts` →
+  Test A (çözümlenemeyen domain → `false` değil, `AuthValidationNetworkError`
+  throw, `instanceof` ile teyitli) + Test B (gerçek erişilebilir hedef —
+  GitHub'ın oturum gerektiren sayfası, cookie yok → gerçekten `false`) — ikisi
+  de "✅ Tüm testler geçti" ile ekran görüntüsüyle teyit edildi. `git commit`
+  + `git push` tamamlandı (`1f4e015..948fc44 main -> main`, hata yok — merge
+  sırasında editör takılması bir git/ortam sorunuydu, kodla ilgisizdi).
+  **Sınır:** Test B kullanıcının kendi production `validationUrl`/pattern'lerini
+  DOĞRULAMADI (sadece davranış düzeltmesini kanıtladı) — gerçek değerler
+  geldiğinde ayrıca test edilmeli.
 
 ---
 
@@ -308,10 +349,24 @@
   tüketici kodu görülmeden onay istemek riskli — dosya başlığındaki eski
   bir not güncel gerçeği yansıtmayabilir, genişletme onayı SADECE gerçek
   kod görüldükten sonra istenmeli.
+- **(Yeni — Session 3)** Bir hata durumunu (ağ/DNS hatası) başka bir hata
+  durumuyla (gerçek "unauthenticated" pattern eşleşmesi) aynı dönüş
+  değerine (`false`) sıkıştırmak, ikisini birbirinden ayırt edilemez hale
+  getirir — bu, "runtime doğrulaması" adımının kendisi sırasında (yanlışlıkla
+  girilen bir placeholder domain üzerinden) ortaya çıktı; test yanlış
+  sebepten "geçmiş" görünüyordu. Ders: bir testin "geçti" demesi yetmez,
+  NEDEN geçtiği de doğrulanmalı.
+- **(Yeni — Session 3)** Bir dosyayı repo'daki gerçek adından farklı bir
+  isimle (`auth-validation_types.ts` vs gerçek `auth-validation.types.ts`)
+  artifact olarak vermek, kullanıcının onu üzerine yazmak yerine ayrı bir
+  dosya olarak yüklemesine yol açtı — hem `tsc` hem runtime import hatası
+  bu yüzden çıktı. Ders: verilen dosya adı, hedef repo yoluyla nokta/alt
+  çizgi dahil BİREBİR eşleşmeli, ya da hedef yol açıkça belirtilmeli.
 
 ---
 
-*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya şu an 317 satır —
-AGENT.md Kural #11'deki 400 satır arşivleme eşiğinin altında, bu nedenle bu
-turda arşive taşıma yapılmadı. Eşik aşıldığında en eski kapanmış madde
-geçmişi (örn. Madde #1/#5/#6 girdileri) `session_arşiv.md`'ye TAM taşınacak.*
+*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya şu an 372 satır —
+AGENT.md Kural #11'deki 400 satır arşivleme eşiğine yaklaşıyor. Bir sonraki
+büyük kapanışta arşive taşıma yapılmalı. Eşik aşıldığında en eski kapanmış
+madde geçmişi (örn. Madde #1/#5/#6 girdileri) `session_arşiv.md`'ye TAM
+taşınacak.*
