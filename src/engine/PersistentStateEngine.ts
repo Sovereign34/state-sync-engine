@@ -26,12 +26,23 @@
 //          kilidi hâlâ true iken FULL_RECOVERY kararına ulaşır ve
 //          `if (this.isRecovering) return;` guard'ı bunu sessizce yutar
 //          (bkz. handleGovernorDecision içindeki KRİTİK yorum).
-//          (Madde #22 — dar kapsam, bu tur) THROTTLE case'i artık
+//          (Madde #22 — dar kapsam, önceki tur) THROTTLE case'i
 //          proxyManager.markFailed(proxyId, 'HTTP_429') çağırıyor —
 //          QUARANTINE_PROXY/FULL_RECOVERY case'lerindeki mevcut desenle
 //          birebir aynı guard (`if (this.currentLease)`). Önceden bu çağrı
 //          hiç yapılmıyordu; HTTP_429 anomaly'leri proxy'nin
 //          http429Count/quarantineUntil alanlarına HİÇ yansımıyordu.
+//          (Madde #22 — BU TUR) ROTATE_SESSION_ONLY case'ine de aynı desende
+//          markFailed('HTTP_429') eklendi — çünkü asıl production yolu (429/
+//          scope=SESSION) buradan geçiyor, THROTTLE ise sadece scope=IP/
+//          INFRASTRUCTURE durumunda tetikleniyor. FARK: ROTATE_SESSION_ONLY,
+//          AdaptiveGovernor.evaluatePolicy()'de HEM HTTP_429 HEM
+//          CHALLENGE_DETECTED için aynı action'a düşüyor — bu yüzden çağrı
+//          SADECE `event.anomaly.type === AnomalyType.HTTP_429` iken yapılıyor
+//          (aksi halde bir CHALLENGE_DETECTED rotasyonu proxy'nin
+//          http429Count'unu yanlışlıkla artırır — yanlış telemetri, Madde 22
+//          disiplini ihlali). Bu guard olmadan yazılan ilk taslakta bu hata
+//          vardı, kod verilmeden önce yakalanıp düzeltildi.
 //          recordSuccess() (başarı sinyali) bu turun kapsamı DIŞINDA
 //          bırakıldı — kullanıcı kararı, ayrı bir instrumentation tasarımı
 //          gerektiriyor.
@@ -47,7 +58,7 @@
 //          bir onay/tur gerektirir, bu KARAR BİLDİRİMİ'nin kapsamı dışıdır.
 //          DAVRANIŞ DEĞİŞİKLİĞİ (Madde #8'den, değişmedi): proxy release
 //          sırası "acquire yeni → release eski" (önceden tersiydi).
-// (Madde #33 — ilk adım, bu tur) attachLifecycleObservers(): 429/403 tespiti
+// (Madde #33 — ilk adım, önceki tur) attachLifecycleObservers(): 429/403 tespiti
 //          artık ham page.on('response', ...) DEĞİL, IStateObserver sözleşmesini
 //          implement eden PlaywrightPageObserver (adapters/PlaywrightPageObserver.ts)
 //          üzerinden geliyor. Bu metod artık ham Playwright event'ini görmüyor,
@@ -401,7 +412,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     try {
       switch (event.action) {
         case GovernorAction.THROTTLE:
-          // (Madde #22 — dar kapsam, bu tur) Önceden bu case sadece bekliyordu;
+          // (Madde #22 — dar kapsam, önceki tur) Önceden bu case sadece bekliyordu;
           // proxyManager hiç haberdar edilmiyordu. Diğer iki case'deki
           // (QUARANTINE_PROXY/FULL_RECOVERY) mevcut desenle birebir aynı guard.
           if (this.currentLease) {
@@ -419,6 +430,14 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           break;
 
         case GovernorAction.ROTATE_SESSION_ONLY:
+          // (Madde #22 — BU TUR) ROTATE_SESSION_ONLY, AdaptiveGovernor.evaluatePolicy()'de
+          // HEM HTTP_429 (scope=SESSION) HEM CHALLENGE_DETECTED için tetikleniyor.
+          // markFailed('HTTP_429') SADECE gerçek anomaly HTTP_429 ise çağrılır —
+          // aksi halde bir CHALLENGE_DETECTED rotasyonu proxy'nin http429Count'unu
+          // yanlışlıkla artırır (yanlış telemetri, Madde 22 disiplini ihlali).
+          if (this.currentLease && event.anomaly.type === AnomalyType.HTTP_429) {
+            this.proxyManager.markFailed(this.currentLease.proxyId, 'HTTP_429');
+          }
           await this.createSessionWithFreshState(true);
           break;
 
