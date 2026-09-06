@@ -1,6 +1,9 @@
 // PersistentStateEngine.ts
 // Amaç:    Browser context/page yaşam döngüsünü, proxy lease alımını ve
 //          cookie/localStorage/sessionStorage state sürekliliğini yönetir.
+//          Ayrıca Madde #7'nin RecoveryCommandPort'unu implement eder —
+//          AdaptiveGovernor'ın kararlarını fire-and-forget emit yerine
+//          gerçek bir command-pattern çağrısıyla alır.
 // Katman:  engine
 // Risk:    Madde #8 çözümüyle bu risk kapatıldı: createSessionWithFreshState()
 //          artık "make-before-break" transaction modeliyle çalışıyor — yeni
@@ -23,9 +26,9 @@
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
-import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType, ProxyLease } from '../types';
+import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType, ProxyLease, RecoveryCommandPort } from '../types';
 
-export class PersistentStateEngine {
+export class PersistentStateEngine implements RecoveryCommandPort {
   private context?: BrowserContext;
   private page?: Page;
   private currentLease?: ProxyLease;
@@ -44,13 +47,20 @@ export class PersistentStateEngine {
     private proxyManager: AdvancedProxyManager,
     private governor: AdaptiveGovernor
   ) {
-    this.bindGovernor();
+    // Madde #7 tam kapanış: eski `.on('decision', ...)` yerine, kendimizi
+    // resmi RecoveryCommandPort olarak kaydediyoruz. Bu, aynı kararın hem
+    // legacy listener hem port üzerinden iki kez tetiklenmesi riskini
+    // (isRecovering kilidi bunu maskeliyordu ama kırılgan bir sıralamaya
+    // dayanıyordu) kökten ortadan kaldırır — tek karar, tek işleme yolu.
+    this.governor.setCommandPort(this);
   }
 
-  private bindGovernor(): void {
-    this.governor.on('decision', async (event: GovernorDecisionEvent) => {
-      await this.handleGovernorDecision(event);
-    });
+  /**
+   * RecoveryCommandPort implementasyonu — AdaptiveGovernor'ın her kararı
+   * bu metod üzerinden, `Promise.allSettled` ile beklenerek iletir.
+   */
+  public async handleDecision(decision: GovernorDecisionEvent): Promise<void> {
+    await this.handleGovernorDecision(decision);
   }
 
   public async initialize(): Promise<void> {
