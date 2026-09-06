@@ -6,16 +6,22 @@
 // Risk:    Lease mekanizması bozulursa iki session aynı proxy'yi paralel
 //          kullanabilir (orijinal Madde #5 sorunu geri döner) veya expire
 //          olmayan lease'ler proxy'yi kalıcı olarak "meşgul" bırakıp havuzu
-//          tüketebilir. Madde #23: getAllMetrics()/getProxyMetrics() dışa
-//          credential (username/password) sızdırırsa, bu bilgi log/telemetry/
-//          monitoring API'sine çıplak ulaşabilir.
+//          tüketebilir. Madde #23: getAllMetrics() dışa credential
+//          (username/password) sızdırırsa, bu bilgi log/telemetry/monitoring
+//          API'sine çıplak ulaşabilir — getProxyMetrics() ise BİLİNÇLİ olarak
+//          credential'lı kalır (bkz. Dokunma), çünkü PersistentStateEngine
+//          gerçek proxy bağlantısı için ona ihtiyaç duyar; bu ikisini
+//          KARIŞTIRMAMAK bu dosyanın en kritik kuralı.
 // Dokunma: `ProxyLease` tipi (types/index.ts) ve bu sınıfı kullanan her yer
-//          (şu an yalnızca src/engine/PersistentStateEngine.ts) — bu dosyadaki
-//          `acquireProxy()` imzası değişti (artık ProxyLease döner, ProxyMetrics
-//          değil); entegrasyon ayrı bir KARAR BİLDİRİMİ ile yapılacak.
-//          `PublicProxyMetrics` tipi (types/governor-command.types.ts) — Madde
-//          #23 ile getAllMetrics()/getProxyMetrics() bu tipi döner, ham
-//          ProxyMetrics'i değil.
+//          (şu an yalnızca src/engine/PersistentStateEngine.ts — hem
+//          `acquireProxy()` hem de credential için `getProxyMetrics()`
+//          çağırıyor, satır ~218). `PublicProxyMetrics` tipi
+//          (types/governor-command.types.ts) — Madde #23 ile SADECE
+//          `getAllMetrics()` bu tipi döner. `getProxyMetrics()` ham
+//          `ProxyMetrics`'i (credential dahil) dönmeye DEVAM EDER — bu bir
+//          önceki turda yanlışlıkla `PublicProxyMetrics`'e çevrilip
+//          `src/index.ts`/`PersistentStateEngine.ts` derlemesini kırmıştı
+//          (`tsc --noEmit` ile yakalandı), bu tur o hatayı düzeltiyor.
 
 import { ProxyMetrics, ProxyLease, PublicProxyMetrics } from '../types';
 
@@ -200,21 +206,37 @@ export class AdvancedProxyManager {
   }
 
   /**
-   * Madde #23 çözümü: credential alanları (username/password) dışarı
-   * dönmez. `metrics` içindeki geri kalan tüm alanlar bir KOPYA olarak
-   * (spread ile) döner — çağıran taraf döndürülen objeyi mutasyona uğratsa
-   * bile sınıfın içindeki gerçek `ProxyMetrics` etkilenmez.
+   * Madde #23 çözümü — DÜZELTME (bkz. dosya başlığı): credential alanları
+   * (username/password) SADECE bu helper'ın çağrıldığı yerde elenir.
+   * `metrics` içindeki geri kalan tüm alanlar bir KOPYA olarak (spread ile)
+   * döner — çağıran taraf döndürülen objeyi mutasyona uğratsa bile sınıfın
+   * içindeki gerçek `ProxyMetrics` etkilenmez.
    */
   private toPublicMetrics(metrics: ProxyMetrics): PublicProxyMetrics {
     const { username, password, ...publicFields } = metrics;
     return { ...publicFields };
   }
 
-  public getProxyMetrics(server: string): PublicProxyMetrics | undefined {
-    const metrics = this.proxies.get(server);
-    return metrics ? this.toPublicMetrics(metrics) : undefined;
+  /**
+   * İÇ KULLANIM İÇİNDİR — credential'lı (username/password dahil) tam
+   * `ProxyMetrics` döner. Bu, motorun gerçek proxy bağlantısını kurmak
+   * için (bkz. PersistentStateEngine.createSessionWithFreshState,
+   * `browser.newContext({ proxy: {...} })`) credential'a ulaştığı TEK
+   * meşru yoldur — Madde #23 kapsamına GİRMEZ.
+   * ⚠️ Bu metodun sonucu asla log'a, telemetriye veya dışa açık bir
+   * monitoring/API response'una yazılmamalı (Madde #22 bu metoda değil,
+   * getAllMetrics()'in credential'sız çıktısına bağlanmalı). Dışa dönük /
+   * toplu bir görünüm gerekiyorsa getAllMetrics() kullanılır.
+   */
+  public getProxyMetrics(server: string): ProxyMetrics | undefined {
+    return this.proxies.get(server);
   }
 
+  /**
+   * DIŞA AÇIK / TOPLU görünümdür (monitoring, gelecekteki Madde #22
+   * telemetry entegrasyonu, health/readiness endpoint vb.). Madde #23
+   * çözümü tam olarak burada: credential alanları YOK, her öğe bir kopya.
+   */
   public getAllMetrics(): PublicProxyMetrics[] {
     return Array.from(this.proxies.values()).map((metrics) => this.toPublicMetrics(metrics));
   }
