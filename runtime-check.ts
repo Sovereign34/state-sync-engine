@@ -1,16 +1,39 @@
 // runtime-check.ts
-// Amaç:    Madde #6 (sıralı recovery işleme), #7 (RecoveryCommandPort tek yolu)
-//          ve #8 (make-before-break transaction/rollback) için birleşik
-//          runtime doğrulama senaryosu.
+// Amaç:    Madde #6 (sıralı recovery işleme), #7 (RecoveryCommandPort tek yolu),
+//          #8 (make-before-break transaction/rollback) ve #22 (network→proxy
+//          metrics instrumentation: THROTTLE + ROTATE_SESSION_ONLY→markFailed
+//          köprüsü) için birleşik runtime doğrulama senaryosu.
 // Katman:  verification (production kodu değil — src/ dışında tutulur, Madde #1)
 // Risk:    Bu betik gerçek Playwright/proxy altyapısını KULLANMAZ — Browser ve
 //          AdvancedProxyManager minimal mock'larla değiştirilmiştir. Amaç,
-//          governor/engine arasındaki sıralama ve komut-yönlendirme mantığını
-//          izole doğrulamaktır; network/proxy katmanının kendisi bu betiğin
-//          kapsamı DIŞINDADIR.
+//          governor/engine arasındaki sıralama, komut-yönlendirme mantığını VE
+//          (bu tur) proxy metrics telemetrisinin doğru proxy'ye/doğru anomaly
+//          tipine bağlandığını izole doğrulamaktır; network/proxy katmanının
+//          kendisi bu betiğin kapsamı DIŞINDADIR.
 // Dokunma: src/engine/AdaptiveGovernor.ts, src/engine/PersistentStateEngine.ts,
 //          src/types/governor-command.types.ts — imzalar değişirse bu betik
 //          de güncellenmeli.
+// DEĞİŞİKLİK (bu tur, Madde #22 genişletme doğrulaması):
+//   (a) `PersistentStateEngine` artık 4. argüman olarak `authValidator`
+//       zorunlu kılıyor — mock `{ validate: async () => true }` eklendi.
+//       Bunsuz önceki hâli constructor'da patlamıyordu, ama
+//       `createSessionWithFreshState`'in preserve=true dalında
+//       `this.authValidator.validate(...)` çağrısı `undefined` üzerinde
+//       patlayıp rollback'e düşüyordu — testler "geçiyor" görünüyordu ama
+//       YANLIŞ SEBEPTEN (gerçek COMMIT yolu hiç çalışmamış olabilirdi).
+//       Şimdi gerçek COMMIT yolu doğrulanıyor.
+//   (b) `mockProxyManager` stateful hale getirildi: proxyId → gerçek
+//       http429Count/http403Count sayaçları bir `Map` üzerinde tutuluyor,
+//       `markFailed()` bunları artırıyor, `getProxyMetrics()` güncel
+//       değerleri dönüyor. `markFailedCalls` log dizisi eklendi — hangi
+//       proxy'ye hangi sebeple çağrıldığını doğrulamak için.
+//   (c) Yeni TEST 3: HTTP_429/scope=SESSION → ROTATE_SESSION_ONLY →
+//       markFailed('HTTP_429') ROTASYONDAN ÖNCEKİ (eski/aktif) proxy'ye
+//       uygulanıyor mu, ve o proxy'nin http429Count'u gerçekten artıyor mu.
+//   (d) TEST 2'ye ek assertion: CHALLENGE_DETECTED de ROTATE_SESSION_ONLY'e
+//       düşüyor (AdaptiveGovernor.evaluatePolicy) — bu senaryoda markFailed
+//       HİÇ çağrılmamalı (tip-guard'ın gerçekten HTTP_429'a özel olduğunun
+//       kanıtı; düzeltilen Hata 1'in regresyon testi).
 //
 // Çalıştırma (repo kökünden):
 //   npx ts-node --transpile-only runtime-check.ts
@@ -21,19 +44,60 @@
 
 import { AdaptiveGovernor } from './src/engine/AdaptiveGovernor';
 import { PersistentStateEngine } from './src/engine/PersistentStateEngine';
-import { AnomalyType, AnomalyScope, ProxyLease, ProxyMetrics } from './src/types';
+import { AnomalyType, AnomalyScope, ProxyLease, ProxyMetrics, AuthValidationPort } from './src/types';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { AdvancedProxyManager } from './src/network/AdvancedProxyManager';
 
 let leaseCounter = 0;
 const acquiredLeaseIds: string[] = [];
 const releasedLeaseIds: string[] = [];
+const leaseIdToProxyId = new Map<string, string>();
+const markFailedCalls: Array<{ proxyId: string; reason: string }> = [];
 
 function log(msg: string): void {
   console.log(msg);
 }
 
+/**
+ * (Bu tur) Şu ana kadar acquire edilip henüz release EDİLMEMİŞ en son lease —
+ * yani engine.currentLease'in dışarıdan (bir getter olmadan) gözlemlenebilir
+ * karşılığı. Test 2'deki başarısız/rollback edilen deneme gibi "acquire
+ * edildi ama sonra release edildi" leaseleri atlar.
+ */
+function getActiveLeaseId(): string {
+  for (let i = acquiredLeaseIds.length - 1; i >= 0; i--) {
+    if (!releasedLeaseIds.includes(acquiredLeaseIds[i])) {
+      return acquiredLeaseIds[i];
+    }
+  }
+  throw new Error('[runtime-check] Aktif lease bulunamadı — beklenmeyen durum');
+}
+
+function getActiveProxyId(): string {
+  const leaseId = getActiveLeaseId();
+  const proxyId = leaseIdToProxyId.get(leaseId);
+  if (!proxyId) {
+    throw new Error(`[runtime-check] leaseId için proxyId bulunamadı: ${leaseId}`);
+  }
+  return proxyId;
+}
+
 // ---------------- Mock AdvancedProxyManager ----------------
+interface MutableProxyState {
+  http429Count: number;
+  http403Count: number;
+}
+const proxyState = new Map<string, MutableProxyState>();
+
+function ensureProxyState(proxyId: string): MutableProxyState {
+  let state = proxyState.get(proxyId);
+  if (!state) {
+    state = { http429Count: 0, http403Count: 0 };
+    proxyState.set(proxyId, state);
+  }
+  return state;
+}
+
 const mockProxyManager = {
   acquireProxy(sessionId: string): ProxyLease {
     leaseCounter++;
@@ -45,10 +109,13 @@ const mockProxyManager = {
       expiresAt: Date.now() + 60_000,
     };
     acquiredLeaseIds.push(lease.leaseId);
+    leaseIdToProxyId.set(lease.leaseId, lease.proxyId);
+    ensureProxyState(lease.proxyId);
     log(`  [ProxyManager] acquireProxy() -> ${lease.leaseId}`);
     return lease;
   },
   getProxyMetrics(proxyId: string): ProxyMetrics | undefined {
+    const state = ensureProxyState(proxyId);
     return {
       server: `http://${proxyId}.example:8080`,
       username: 'redacted-user',
@@ -56,8 +123,8 @@ const mockProxyManager = {
       latencyMs: 40,
       dnsFailures: 0,
       tlsFailures: 0,
-      http403Count: 0,
-      http429Count: 0,
+      http403Count: state.http403Count,
+      http429Count: state.http429Count,
       successCount: 0,
       failureCount: 0,
       lastUsed: Date.now(),
@@ -69,9 +136,21 @@ const mockProxyManager = {
     log(`  [ProxyManager] releaseProxy(${leaseId})`);
   },
   markFailed(proxyId: string, reason: string): void {
+    markFailedCalls.push({ proxyId, reason });
+    const state = ensureProxyState(proxyId);
+    if (reason === 'HTTP_429') state.http429Count++;
+    if (reason === 'HTTP_403') state.http403Count++;
     log(`  [ProxyManager] markFailed(${proxyId}, ${reason})`);
   },
 } as unknown as AdvancedProxyManager;
+
+// ---------------- Mock AuthValidationPort ----------------
+// (Bu tur) PersistentStateEngine'in 4. argümanı artık zorunlu — bunsuz
+// createSessionWithFreshState(preserve=true) dalı authValidator.validate()'i
+// undefined üzerinde çağırıp patlıyordu (bkz. dosya başlığı, (a)).
+const mockAuthValidator = {
+  validate: async () => true,
+} as unknown as AuthValidationPort;
 
 // ---------------- Mock Browser / Context / Page ----------------
 let contextCounter = 0;
@@ -120,7 +199,7 @@ async function main(): Promise<void> {
   const pass = (msg: string) => console.log(`  ✅ PASS: ${msg}`);
 
   const governor = new AdaptiveGovernor();
-  const engine = new PersistentStateEngine(mockBrowser, mockProxyManager, governor);
+  const engine = new PersistentStateEngine(mockBrowser, mockProxyManager, governor, mockAuthValidator);
   await engine.initialize();
 
   let legacyListenerCount = 0;
@@ -163,10 +242,11 @@ async function main(): Promise<void> {
     fail('acquire/release sayıları tutarsız');
   }
 
-  // ============ TEST 2 — Madde #8 (rollback, eski oturum bozulmuyor) ============
-  console.log('\n=== TEST 2: context oluşturma sırasında hata enjekte ediliyor ===');
+  // ============ TEST 2 — Madde #8 (rollback) + Madde #22 Hata-1 regresyonu ============
+  console.log('\n=== TEST 2: context oluşturma sırasında hata enjekte ediliyor (CHALLENGE_DETECTED) ===');
   const contextBefore = engine.getContext();
   const leaseIdBeforeTest2Attempt = acquiredLeaseIds.length;
+  const markFailedCallsBeforeTest2 = markFailedCalls.length;
 
   failNextContextCreation = true;
   governor.enqueueAnomaly({
@@ -190,10 +270,44 @@ async function main(): Promise<void> {
     fail('başarısız denemenin lease\'i release edilmemiş — proxy lease sızıntısı riski');
   }
 
+  // (Bu tur, Madde #22 Hata-1 regresyon testi) CHALLENGE_DETECTED da
+  // ROTATE_SESSION_ONLY'e düşüyor — ama bu anomaly HTTP_429 OLMADIĞI için
+  // markFailed('HTTP_429') hiç çağrılmamalı.
+  if (markFailedCalls.length === markFailedCallsBeforeTest2) {
+    pass("CHALLENGE_DETECTED rotasyonunda markFailed hiç çağrılmadı — tip-guard (event.anomaly.type === HTTP_429) doğru çalışıyor");
+  } else {
+    fail(`CHALLENGE_DETECTED rotasyonunda markFailed ${markFailedCalls.length - markFailedCallsBeforeTest2} kez çağrıldı — tip-guard çalışmıyor, telemetri yanlış proxy'yi/anomaly'yi işaretliyor: ${JSON.stringify(markFailedCalls.slice(markFailedCallsBeforeTest2))}`);
+  }
+
+  // ============ TEST 3 — Madde #22 (ROTATE_SESSION_ONLY→markFailed köprüsü) ============
+  console.log("\n=== TEST 3: HTTP_429/scope=SESSION -> ROTATE_SESSION_ONLY -> markFailed('HTTP_429') ESKİ (aktif) proxy'ye uygulanmalı ===");
+
+  const activeProxyIdBeforeTest3 = getActiveProxyId();
+  const http429CountBefore = mockProxyManager.getProxyMetrics(activeProxyIdBeforeTest3)?.http429Count ?? 0;
+  const markFailedCallsBeforeTest3 = markFailedCalls.length;
+
+  governor.enqueueAnomaly({
+    id: 'a-429-session', type: AnomalyType.HTTP_429, scope: AnomalyScope.SESSION, timestamp: Date.now(),
+  });
+
+  await waitUntilIdle(governor);
+
+  const http429CountAfter = mockProxyManager.getProxyMetrics(activeProxyIdBeforeTest3)?.http429Count ?? 0;
+  const relevantMarkFailedCalls = markFailedCalls.slice(markFailedCallsBeforeTest3);
+  const calledOnOldProxy = relevantMarkFailedCalls.some(
+    (c) => c.proxyId === activeProxyIdBeforeTest3 && c.reason === 'HTTP_429'
+  );
+
+  if (calledOnOldProxy && http429CountAfter === http429CountBefore + 1) {
+    pass(`markFailed('HTTP_429'), ROTASYONDAN ÖNCEKİ aktif proxy'ye (${activeProxyIdBeforeTest3}) uygulandı — http429Count ${http429CountBefore} -> ${http429CountAfter} (Madde #22 köprüsü çalışıyor)`);
+  } else {
+    fail(`beklenen: ${activeProxyIdBeforeTest3}'in http429Count'u +1 artmalı; gerçekleşen: ${http429CountBefore} -> ${http429CountAfter}, bu turdaki markFailed çağrıları: ${JSON.stringify(relevantMarkFailedCalls)}`);
+  }
+
   // ============ SONUÇ ============
   console.log('\n=== SONUÇ ===');
   if (failures === 0) {
-    console.log('✅ Tüm testler geçti — Madde #6/#7/#8 bu senaryolar altında runtime doğrulandı.');
+    console.log('✅ Tüm testler geçti — Madde #6/#7/#8 ve #22 (THROTTLE+ROTATE_SESSION_ONLY→markFailed köprüsü, tip-guard dahil) bu senaryolar altında runtime doğrulandı.');
   } else {
     console.log(`❌ ${failures} test başarısız — ilgili maddeyi P0'da açık tutun, koda bakılmalı.`);
     process.exitCode = 1;
