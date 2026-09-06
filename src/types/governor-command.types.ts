@@ -12,7 +12,9 @@
 //          Madde #9 ile AUTH_VALIDATION_FAILED icin yeni bir evaluatePolicy
 //          case'i eklendi), PersistentStateEngine.ts (tuketici, Madde #9 ile
 //          handleGovernorDecision'in catch'inde bu tipi enqueue ediyor),
-//          AdvancedProxyManager.ts (ProxyLease/ProxyMetrics tuketicisi),
+//          AdvancedProxyManager.ts (ProxyLease/ProxyMetrics tuketicisi;
+//          Madde #23 ile getAllMetrics()/getProxyMetrics() artik asagidaki
+//          PublicProxyMetrics'i donuyor, ham ProxyMetrics'i degil),
 //          auth-validation.types.ts (bu dosyadaki PreservedSessionState'i
 //          AuthValidationPort imzasinda kullanir).
 //
@@ -123,10 +125,11 @@ export interface ProxyLease {
 /**
  * DOGRULANDI - AdvancedProxyManager.ts'in TAMAMI goruldu (registerProxy,
  * calculateHealthScore, markFailed). Tum alanlar orada birebir kullaniliyor.
- * UYARI: getAllMetrics(): ProxyMetrics[] username/password dahil TUM alanlari
- * ciplak dondurur - bu Madde #23'un (credential izolasyonu) konusu. Burada
- * SADECE tipi dogru yaziyorum, izolasyonu bu turda COZMUYORUM (kapsam disi,
- * ayri KARAR BILDIRIMI gerekir - tek problem tek cozum kurali).
+ * Bu tip, sinifin ICINDEKI (Map<string, ProxyMetrics>) dahili gosterimidir -
+ * credential alanlari (username/password) burada KASITLI olarak var, cunku
+ * registerProxy() proxy'yi olusturuken bu bilgiye ihtiyac duyuyor. DISARIYA
+ * (getAllMetrics/getProxyMetrics) bu ham tip ARTIK donmuyor - Madde #23
+ * cozumu icin asagidaki PublicProxyMetrics'e bakiniz.
  */
 export interface ProxyMetrics {
   server: string;
@@ -142,6 +145,16 @@ export interface ProxyMetrics {
   lastUsed: number;
   quarantineUntil: number;
 }
+
+/**
+ * Madde #23 cozumu: AdvancedProxyManager'in DISA ACIK metrik/monitoring
+ * yuzeyinin (getAllMetrics/getProxyMetrics) donus tipi. ProxyMetrics'ten
+ * FARKI: username/password YOK. Credential, sinifin private Map'inde kalir,
+ * bu tipin uretildigi noktada (AdvancedProxyManager icinde) destructure
+ * edilerek elenir - yani sizinti, tip seviyesinde degil, DEGER seviyesinde
+ * de engellenir (referans degil kopya doner).
+ */
+export type PublicProxyMetrics = Omit<ProxyMetrics, 'username' | 'password'>;
 
 /**
  * DOGRULANDI (PersistentStateEngine.ts captureCurrentState/applyPreservedState):
