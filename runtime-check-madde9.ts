@@ -224,9 +224,16 @@ async function senaryoA(): Promise<void> {
 
   assert(auth.getCallCount() === 1, 'preserve=true denemesinde validate() tam 1 kez çağrıldı');
   assert(engine.getContext() === contextBefore, 'ROLLBACK: validate=false sonrası eski context DEĞİŞMEDİ');
+  // NOT: burada "acquireCalls.length === 2" gibi kesin bir sayı BEKLENEMEZ —
+  // queueMicrotask ile ertelenen FULL_RECOVERY zinciri, bu satır çalışana
+  // kadar zaten kendi acquireProxy()'sini tetiklemiş olabilir (iki zincir
+  // awaitlenmeden interleave oluyor, bu race değil çünkü hangi lease'in
+  // hangi denemeye ait olduğu index'e göre sabit — sadece "ne zaman"
+  // belirsiz). Bu yüzden index bazlı (acquireCalls[1] = başarısız deneme)
+  // kontrol ediyoruz, toplam sayıyı değil.
   assert(
-    proxy.acquireCalls.length === 2 && proxy.releasedLeaseIds.includes(proxy.acquireCalls[1].leaseId),
-    'ROLLBACK: başarısız denemenin yeni lease\'i release edildi, sızıntı yok'
+    proxy.acquireCalls.length >= 2 && proxy.releasedLeaseIds.includes(proxy.acquireCalls[1].leaseId),
+    'ROLLBACK: başarısız denemenin (2. lease) release edildiği doğrulandı, sızıntı yok'
   );
   assert(
     proxy.activeLeaseIds.has(proxy.acquireCalls[0].leaseId),
