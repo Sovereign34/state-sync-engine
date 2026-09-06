@@ -6,13 +6,14 @@
 // Risk:    Bu dosya bozulursa iki anomaly'nin decision'ı üst üste (aynı anda)
 //          işlenebilir — downstream tüketici (örn. PersistentStateEngine)
 //          hâlâ önceki recovery'i sürdürürken ikinci decision'ı da işlemeye
-//          çalışabilir, ya da bir listener/port hatası tüm kuyruğu durdurabilir.
-// Dokunma: `.on('decision', ...)` ile kayıt yapan her tüketici (şu an yalnızca
-//          src/engine/PersistentStateEngine.ts — bu tur onu KIRMIYOR, ama
-//          Madde #7'nin asıl hedefi olan RecoveryCommandPort'u henüz
-//          implement ETMİYOR, bu ayrı bir KARAR BİLDİRİMİ) ve yeni
-//          RecoveryCommandPort tüketicileri (constructor'a enjekte edilir).
-//          governor-command.types.ts'teki tip varsayımlarına bağımlı.
+//          çalışabilir, ya da bir port hatası tüm kuyruğu durdurabilir.
+// Dokunma: Madde #7 tam kapandı — PersistentStateEngine artık RecoveryCommandPort'u
+//          gerçekten implement ediyor ve kendi constructor'ında
+//          `governor.setCommandPort(this)` ile kaydediyor; eski `.on('decision', ...)`
+//          yolu PersistentStateEngine tarafında KALDIRILDI (çift-tetiklenme riskini
+//          önlemek için). `.on('decision', ...)` mekanizması genel EventEmitter
+//          API'si olarak hâlâ mevcut, başka bir tüketici (yoksa) kullanabilir.
+//          governor-command.types.ts'teki tiplere bağımlı.
 
 import { EventEmitter } from 'events';
 import {
@@ -38,15 +39,20 @@ export class AdaptiveGovernor extends EventEmitter {
   private duplicateWindowMs = 2000; // Aynı anomali tipi için coalesce penceresi
 
   /**
-   * Madde #7 Çözümü: Ham `.on('decision', ...)` yerine, opsiyonel olarak
-   * enjekte edilen tip-güvenli bir command port. Sağlanmışsa, her karar
-   * bu port üzerinden de (legacy listener'larla birlikte, aynı
-   * Promise.allSettled turunda) beklenir. Bu turda eski emit yolu
-   * KALDIRILMADI — PersistentStateEngine henüz bu portu implement etmiyor
-   * (görülmedi), o migrasyon ayrı bir KARAR BİLDİRİMİ.
+   * Madde #7 Çözümü (tam kapanış): Constructor enjeksiyonu yerine setter —
+   * çünkü EngineFactory'de governor önce, onu tüketen PersistentStateEngine
+   * sonra oluşturuluyor (circular dependency: engine, governor'a constructor'da
+   * ihtiyaç duyuyor). PersistentStateEngine kendi constructor'ının sonunda
+   * `governor.setCommandPort(this)` çağırarak kendini port olarak kaydeder.
    */
-  constructor(private readonly commandPort?: RecoveryCommandPort) {
+  private commandPort?: RecoveryCommandPort;
+
+  constructor() {
     super();
+  }
+
+  public setCommandPort(port: RecoveryCommandPort): void {
+    this.commandPort = port;
   }
 
   public enqueueAnomaly(anomaly: SemanticAnomaly): void {
