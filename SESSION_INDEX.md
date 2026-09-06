@@ -61,14 +61,36 @@
          değiştiği gözlemlenir.
     - Bu madde KAPANMADI — sadece "kod var mı" sorusu netleşti, "runtime'da
       çalışıyor mu" sorusu hâlâ açık.
-    - **(Yeni) [KARAR BİLDİRİMİ] onaylandı (Confidence: HIGH):** mevcut
-      `runtime-check.ts`'e `recordSuccess` için 1 mock senaryo eklenecek
-      (`response.ok()=true`, `request().timing().responseEnd` geçerli sayı
-      → `recordSuccess` çağrıldığını doğrulayan tek assertion); ayrı dosya
-      açılmayacak, mevcut script genişletilecek. **Uygulama bekliyor** —
-      mevcut `runtime-check.ts`'in tam içeriği henüz bu session'a
-      yüklenmedi, Kural #1/#2 gereği dosya istendi. Kod üretilmeden önce
-      dosya gelmeli.
+    - **(Yeni) [KARAR BİLDİRİMİ] onaylandı ve UYGULANDI (Confidence: HIGH):**
+      `runtime-check.ts` genişletildi — TEST 4 eklendi:
+      `PersistentStateEngine`'in private `handleObserverState()` metodu
+      `(engine as any)` ile doğrudan çağrılıyor (gerçek `PlaywrightPageObserver`
+      response/timing zinciri KASITLI OLARAK mock'lanmadı — bu betiğin
+      beyan edilmiş kapsam sınırı dışında, ayrıntı dosya başlığı (e)'de).
+      İki assertion: (4a) geçerli `latencyMs` (123) ile `recordSuccess`
+      doğru `proxyId`/`latencyMs` ile çağrılıyor mu; (4b) negatif `latencyMs`
+      (-5) ile `recordSuccess` ÇAĞRILMIYOR mu (guard regresyon testi).
+      `!this.currentLease` dalı bilinçli olarak KAPSAM DIŞI bırakıldı (kod
+      akışında lease'siz bir an yaratmak diğer testleri bozmadan mümkün
+      değil) — bu, "no-op çalışıyor" iddiası DEĞİL, sadece kod okumasıyla
+      biliniyor.
+      **Durum: kod üretildi ve kullanıcıya teslim edildi, henüz
+      ÇALIŞTIRILMADI.** `npx tsc --noEmit` / `npx ts-node --transpile-only
+      runtime-check.ts` (ya da `tsx`) çıktısı gelmeden bu madde "doğrulandı"
+      sayılmayacak (⚠️ DERSLER — "niyet beyanı ile gerçekleşmiş sonuç"
+      ayrımı).
+      - **(Yeni) İlk çalıştırma denemesi: ARAÇ/ORTAM HATASI, test SONUCU
+        DEĞİL.** `npx ts-node --transpile-only runtime-check.ts`,
+        `ts-node/dist/configuration.js` içindeki `readConfig`/
+        `findAndReadConfig` aşamasında (tsconfig okuma) patladı — hiçbir
+        TEST (1-4) çalışmadı, `runtime-check.ts`'in kendi mantığı hiç
+        devreye girmedi. Node.js v24.14.0 ortamında. Bu, ⚠️ DERSLER'de
+        zaten kayıtlı olan `ts-node@10.9.2`+`typescript@^7.0.2`
+        uyumsuzluk kalıbına benziyor ama asıl hata mesajının ilk satırı
+        (ekran görüntüsünde kırpılmıştı) henüz görülmedi — kesin kök sebep
+        TEYİT EDİLMEDİ, sadece kalıp eşleşmesi var. `npx tsx
+        runtime-check.ts` ile tekrar deneme veya tam hata mesajı
+        istendi, **sonuç bekleniyor**.
     - **(Yeni) Kullanıcı önerisi reddedildi (kayıt için):** "recordSuccess
       bu kapsam dışı, mevcut runtime-check.ts yeterli" önerisi, bu turun
       kendi bulgusuyla (kod var ama runtime'da hiç test edilmemiş)
@@ -101,11 +123,11 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
-- ~~Madde #22 `recordSuccess` runtime doğrulama yöntemi~~ — **karar verildi
-  (bu turda):** mevcut `runtime-check.ts`'e 1 mock senaryo eklenerek
-  genişletilecek. Soru kapandı; **uygulama** için mevcut `runtime-check.ts`
-  dosyasının tam içeriği bekleniyor (Kural #1/#2 — dosya görülmeden kod
-  üretilmeyecek).
+- ~~Madde #22 `recordSuccess` runtime doğrulama yöntemi~~ — **karar verildi:**
+  mevcut `runtime-check.ts` TEST 4 ile genişletildi, kullanıcıya teslim
+  edildi. **Yeni açık nokta:** betik henüz çalıştırılmadı — gerçek çıktı
+  (`✅ Tüm testler geçti` / hangi test PASS/FAIL) paylaşılmadan Madde #22
+  kapanmayacak.
 - ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
   uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı.** (Teyit sözlü
   seviyede, dosya içeriğiyle ayrıca doğrulanmadı — bkz. ⚡ ANLIK DURUM notu.)
@@ -118,7 +140,7 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR (satır 426/340) ama runtime doğrulaması henüz yapılmadı — mock-genişletme kararı ONAYLANDI, uygulama mevcut `runtime-check.ts` dosyasının paylaşılmasını bekliyor**; diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı. **"Tamamlandı" iddiası bu turda kabul edilmedi** — dar kapsam bile `recordSuccess` runtime doğrulaması olmadan kapanamaz. |
+| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR (satır 426/340), test kodu (`runtime-check.ts` TEST 4) yazılıp teslim edildi ama HENÜZ ÇALIŞTIRILMADI** — gerçek çıktı gelmeden kapanmayacak; diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
