@@ -89,29 +89,38 @@ export interface RecoveryCommandPort {
 }
 
 /**
- * DOGRULANDI (PersistentStateEngine.ts createSessionWithFreshState):
- * lease.leaseId ve lease.proxyId kullaniliyor - minimum dogrulanmis alan seti bu.
- * AdvancedProxyManager.ts'in tam icerigi gorulmedigi icin ek alan (orn. acquiredAt,
- * expiresAt) olabilir ama derlemeyi kirmayacak sekilde eksik birakildi
- * (extra alanlar TS'te sorun cikarmaz, eksik zorunlu alan cikarir - o yuzden
- * burada SADECE dogrulanmis alanlari yaziyorum).
+ * DOGRULANDI - AdvancedProxyManager.ts'in TAMAMI goruldu (acquireProxy,
+ * reclaimExpiredLeases, releaseProxy). Tum alanlar orada birebir kullaniliyor.
  */
 export interface ProxyLease {
   leaseId: string;
   proxyId: string;
+  sessionId: string;
+  acquiredAt: number;
+  expiresAt: number;
 }
 
 /**
- * DOGRULANDI (PersistentStateEngine.ts: metrics.server / metrics.username /
- * metrics.password kullanimi + AdvancedProxyManager.ts getProxyMetrics/getAllMetrics
- * imzalari). UYARI: username/password'un getAllMetrics() araciligiyla cikip
- * cikmadigi Madde #23'un konusu - burada SADECE tipi dogru yaziyorum, izolasyonu
- * bu turda COZMUYORUM (ayri KARAR BILDIRIMI gerekir).
+ * DOGRULANDI - AdvancedProxyManager.ts'in TAMAMI goruldu (registerProxy,
+ * calculateHealthScore, markFailed). Tum alanlar orada birebir kullaniliyor.
+ * UYARI: getAllMetrics(): ProxyMetrics[] username/password dahil TUM alanlari
+ * ciplak dondurur - bu Madde #23'un (credential izolasyonu) konusu. Burada
+ * SADECE tipi dogru yaziyorum, izolasyonu bu turda COZMUYORUM (kapsam disi,
+ * ayri KARAR BILDIRIMI gerekir - tek problem tek cozum kurali).
  */
 export interface ProxyMetrics {
   server: string;
   username?: string;
   password?: string;
+  latencyMs: number;
+  dnsFailures: number;
+  tlsFailures: number;
+  http403Count: number;
+  http429Count: number;
+  successCount: number;
+  failureCount: number;
+  lastUsed: number;
+  quarantineUntil: number;
 }
 
 /**
