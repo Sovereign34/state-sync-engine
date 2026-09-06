@@ -5,28 +5,47 @@
 //          AdaptiveGovernor'ın kararlarını fire-and-forget emit yerine
 //          gerçek bir command-pattern çağrısıyla alır.
 // Katman:  engine
-// Risk:    Madde #8 çözümüyle bu risk kapatıldı: createSessionWithFreshState()
-//          artık "make-before-break" transaction modeliyle çalışıyor — yeni
-//          proxy/context/page TAMAMEN hazır olup commit edilene kadar eski
+// Risk:    Madde #8 çözümüyle "make-before-break" transaction modeli sağlandı:
+//          yeni proxy/context/page TAMAMEN hazır olup commit edilene kadar eski
 //          context/lease'e dokunulmuyor. Herhangi bir adım (acquireProxy,
-//          newContext, newPage, applyState) patlarsa yeni kaynaklar rollback
-//          edilir, eski oturum bozulmadan kalır ve hata yukarı fırlatılır
-//          (Madde 22 — sessiz fallback yasak).
-//          KALAN RİSK: applyState() içindeki cookie/storage hatası hâlâ
-//          yutulup sadece loglanıyor (orijinal davranışla aynı) — bu, context
-//          proxy'li ama state'siz commit edilebileceği anlamına gelir; Madde
-//          #9 (state restore validation) bunu ele alacak, kapsam dışı bırakıldı.
+//          newContext, newPage, applyState, Madde #9 ile eklenen
+//          authValidator.validate) patlarsa yeni kaynaklar rollback edilir,
+//          eski oturum bozulmadan kalır ve hata yukarı fırlatılır (Madde 22 —
+//          sessiz fallback yasak).
+//          Madde #9 ÇÖZÜLDÜ: applyState() içindeki cookie/storage hatası hâlâ
+//          yutulup sadece loglanıyor (bilinçli — bu maddenin konusu state'in
+//          İÇERİĞİNİN set edilip edilmediği değil, restore edilen state'in
+//          uygulamayı GERÇEKTEN authenticate edip etmediği), ama artık
+//          APPLY'dan hemen sonra, COMMIT'ten ÖNCE authValidator.validate()
+//          çağrılıyor — cookie/storage set edilmiş olsa bile uygulama
+//          authenticate olmadıysa AuthRestoreFailedError fırlatılır ve mevcut
+//          rollback zincirine (bu try/catch) dahil olur.
 // Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
 //          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
-//          ProxyLease şekli. DAVRANIŞ DEĞİŞİKLİĞİ: proxy release sırası artık
-//          "acquire yeni → release eski" (önceden tersiydi) — bkz. Madde #8
-//          KARAR BİLDİRİMİ, bu ROTATE_SESSION_ONLY'nin artık aynı proxy'yi
-//          geri seçmesini engelliyor.
+//          ProxyLease şekli. AuthValidationPort sözleşmesi
+//          (types/auth-validation.types.ts) — bu sözleşmeyi implement eden bir
+//          örnek artık constructor'da ZORUNLU (DI, Madde 33/dependency-inversion,
+//          bkz. adapters/DefaultAuthValidator.ts). BREAKING CHANGE:
+//          PersistentStateEngine'i instantiate eden composition root, 4.
+//          argüman olarak bir AuthValidationPort örneği vermek zorunda — bu
+//          dosya dışındaki entegrasyon (composition root güncellemesi) ayrı
+//          bir onay/tur gerektirir, bu KARAR BİLDİRİMİ'nin kapsamı dışıdır.
+//          DAVRANIŞ DEĞİŞİKLİĞİ (Madde #8'den, değişmedi): proxy release
+//          sırası "acquire yeni → release eski" (önceden tersiydi).
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
-import { PreservedSessionState, GovernorAction, AnomalyScope, AnomalyType, ProxyLease, RecoveryCommandPort } from '../types';
+import {
+  PreservedSessionState,
+  GovernorAction,
+  AnomalyScope,
+  AnomalyType,
+  ProxyLease,
+  RecoveryCommandPort,
+  AuthValidationPort,
+  AuthRestoreFailedError
+} from '../types';
 
 export class PersistentStateEngine implements RecoveryCommandPort {
   private context?: BrowserContext;
@@ -45,7 +64,8 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   constructor(
     private browser: Browser,
     private proxyManager: AdvancedProxyManager,
-    private governor: AdaptiveGovernor
+    private governor: AdaptiveGovernor,
+    private authValidator: AuthValidationPort
   ) {
     // Madde #7 tam kapanış: eski `.on('decision', ...)` yerine, kendimizi
     // resmi RecoveryCommandPort olarak kaydediyoruz. Bu, aynı kararın hem
@@ -138,9 +158,12 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       }, { ls: state.localStorage, ss: state.sessionStorage });
     } catch (error) {
       // Madde 22 notu: hata burada yutulup sadece loglanıyor (orijinal davranışla
-      // aynı) — yani context state'siz commit edilebilir. Bunu Madde #8 kapsamında
-      // ÇÖZMÜYORUM (transaction'ın konusu proxy/context/lease tutarlılığı; state
-      // içeriğinin doğrulanması Madde #9'un konusu, ayrı KARAR BİLDİRİMİ gerekir).
+      // aynı) — yani context state'siz commit edilebilir. Bu, Madde #9'un konusu
+      // DEĞİL (state'in İÇERİĞİNİN uygulanıp uygulanmadığı burada hâlâ ele
+      // alınmıyor); Madde #9, uygulanan (veya kısmen uygulanamayan) state'in
+      // uygulamayı GERÇEKTEN authenticate edip etmediğini APPLY'dan SONRA,
+      // ayrı bir adımda (authValidator.validate) doğruluyor — bkz.
+      // createSessionWithFreshState.
       console.warn('[PersistentStateEngine] State re-hydration sırasında hata oluştu:', error);
     }
   }
@@ -148,14 +171,20 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   /**
    * Madde #8 Çözümü — Recovery Transaction Modeli (make-before-break):
    *
-   *   1. CAPTURE  — mevcut context/page'den state çıkar (gerekiyorsa)
-   *   2. ACQUIRE  — yeni proxy lease'i al (ESKİ LEASE'E HENÜZ DOKUNULMAZ)
-   *   3. CREATE   — yeni context + page kur
-   *   4. APPLY    — state'i yeni context/page'e uygula
-   *   5. COMMIT   — buraya kadar hata yoksa instance state'i değiştir,
-   *                 SONRA eski context'i kapat ve eski lease'i bırak
+   *   1. CAPTURE   — mevcut context/page'den state çıkar (gerekiyorsa)
+   *   2. ACQUIRE   — yeni proxy lease'i al (ESKİ LEASE'E HENÜZ DOKUNULMAZ)
+   *   3. CREATE    — yeni context + page kur
+   *   4. APPLY     — state'i yeni context/page'e uygula
+   *   4.5 VALIDATE — (Madde #9, SADECE preserve=true iken) restore edilen
+   *                  state'in uygulamayı GERÇEKTEN authenticate ettiğini
+   *                  authValidator.validate() ile doğrula; başarısızsa
+   *                  AuthRestoreFailedError fırlat — bu COMMIT'ten ÖNCE
+   *                  olduğu için aynı rollback zincirine (aşağıdaki catch)
+   *                  dahil olur, ayrı bir hata yolu YOK.
+   *   5. COMMIT    — buraya kadar hata yoksa instance state'i değiştir,
+   *                  SONRA eski context'i kapat ve eski lease'i bırak
    *
-   * Adım 2-4 arasında herhangi bir hata olursa: yeni oluşturulan kaynaklar
+   * Adım 2-4.5 arasında herhangi bir hata olursa: yeni oluşturulan kaynaklar
    * (lease/context) rollback edilir, `this.context`/`this.page`/`this.currentLease`
    * HİÇ DEĞİŞMEMİŞ olarak kalır (eski oturum sapasağlam), hata yukarı fırlatılır.
    * Bu, önceki modeldeki "eski context zaten kapatılmış + eski lease zaten
@@ -207,6 +236,23 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       // 4. APPLY
       await this.applyState(newContext, newPage, stateToApply);
 
+      // 4.5 VALIDATE — Madde #9: cookie/localStorage set edilmiş olması,
+      // uygulamanın bunları GERÇEKTEN authenticate olarak kabul ettiği
+      // anlamına gelmez. Sadece preserve=true iken çalışır — preserve=false
+      // (FULL_RECOVERY, initial init) zaten temiz/anonim bir state ile
+      // başlıyor, doğrulanacak bir "restore" yok (bu aynı zamanda döngü
+      // riskini de ortadan kaldırır: bu adımdan doğan AuthRestoreFailedError,
+      // handleGovernorDecision'ın catch'inde FULL_RECOVERY'yi preserve=false
+      // ile tetikler, o çağrı bu doğrulamadan tekrar geçmez).
+      if (preserve) {
+        const isValid = await this.authValidator.validate(newPage, stateToApply);
+        if (!isValid) {
+          throw new AuthRestoreFailedError(
+            `sessionId=${this.sessionId} — restore edilen state auth doğrulamasından geçemedi (proxyId=${newLease.proxyId})`
+          );
+        }
+      }
+
       // 5. COMMIT — buraya kadar hiçbir şey patlamadı, artık instance state'i
       // değiştiriyoruz. Bu noktadan sonra rollback YOK — eski kaynaklar temizlenir.
       this.attachLifecycleObservers(newPage);
@@ -224,6 +270,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     } catch (error) {
       // ROLLBACK — yarım kalan yeni kaynaklar temizlenir, eski oturuma
       // HİÇ DOKUNULMADI (this.context/this.page/this.currentLease değişmedi).
+      // Bu dal, Madde #9 ile eklenen AuthRestoreFailedError için de aynı
+      // şekilde çalışır — validate() COMMIT'ten önce çağrıldığı için buraya
+      // düşen bir doğrulama hatası da diğer adım hataları gibi rollback edilir.
       console.error(
         '[PersistentStateEngine] Recovery transaction başarısız oldu, önceki oturum korunuyor:',
         error
@@ -324,6 +373,26 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       }
     } catch (error) {
       console.error('[PersistentStateEngine] Recovery sırasında kritik hata:', error);
+
+      // Madde #9: createSessionWithFreshState() APPLY→COMMIT arasında bir
+      // AuthRestoreFailedError fırlattıysa, rollback zaten tamamlanmış olur
+      // (eski context/lease sağlam) — ama motor hâlâ, restore'u doğrulanamamış
+      // eski (önceki) context'te kalmış olur. Bunu sessizce bırakmak
+      // "başarısız restore = kurtarıldı" varsaymak anlamına gelir (Madde 22
+      // ihlali); bunun yerine FULL_RECOVERY'ye yönlendiren yeni bir anomaly
+      // enqueue ediyoruz. Döngü riski yok: FULL_RECOVERY case'i
+      // createSessionWithFreshState(false) çağırır — doğrulama (4.5 adımı)
+      // sadece preserve=true iken çalıştığı için bu yol ikinci kez
+      // AuthRestoreFailedError üretemez.
+      if (error instanceof AuthRestoreFailedError) {
+        this.governor.enqueueAnomaly({
+          id: Math.random().toString(36).substring(7),
+          type: AnomalyType.AUTH_VALIDATION_FAILED,
+          scope: AnomalyScope.SESSION,
+          timestamp: Date.now(),
+          rawError: error.message
+        });
+      }
     } finally {
       this.isRecovering = false;
     }

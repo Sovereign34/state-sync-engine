@@ -13,7 +13,12 @@
 //          yolu PersistentStateEngine tarafında KALDIRILDI (çift-tetiklenme riskini
 //          önlemek için). `.on('decision', ...)` mekanizması genel EventEmitter
 //          API'si olarak hâlâ mevcut, başka bir tüketici (yoksa) kullanabilir.
-//          governor-command.types.ts'teki tiplere bağımlı.
+//          governor-command.types.ts'teki tiplere bağımlı. Madde #9 ile
+//          evaluatePolicy()'e AUTH_VALIDATION_FAILED için yeni bir case eklendi
+//          (PersistentStateEngine'in handleGovernorDecision'ının catch'inden
+//          enqueue edilir) — bu tip FULL_RECOVERY'e yönlendirilir, döngü riski
+//          yok çünkü FULL_RECOVERY preserve=false ile çağrılır ve doğrulama
+//          sadece preserve=true iken çalışır (bkz. PersistentStateEngine.ts).
 
 import { EventEmitter } from 'events';
 import {
@@ -139,6 +144,13 @@ export class AdaptiveGovernor extends EventEmitter {
       case AnomalyType.PAGE_CRASH:
       case AnomalyType.NETWORK_FAILURE:
         // Çökme veya ağ kopmalarında tam kurtarma döngüsü
+        return GovernorAction.FULL_RECOVERY;
+
+      case AnomalyType.AUTH_VALIDATION_FAILED:
+        // Madde #9: cookie/localStorage restore edildi ama uygulama
+        // authenticate olmadı — kısmi rotasyon (ROTATE_SESSION_ONLY) yetmez,
+        // çünkü sorun proxy'de değil restore edilen state'in geçersizliğinde;
+        // tam kurtarma (preserve=false, temiz state) gerekir.
         return GovernorAction.FULL_RECOVERY;
 
       case AnomalyType.CHALLENGE_DETECTED:
