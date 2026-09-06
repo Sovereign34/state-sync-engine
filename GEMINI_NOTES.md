@@ -18,3 +18,4 @@
 ## 🔒 Quality & Verification Protocols
 - **Proof of Execution:** Never assume a fix works based on theory or compilation alone; verify behaviors through isolated runtime checks and explicit script validations.
 - **Context Preservation:** Maintain strict alignment with the ACOS framework, ensuring modularity, trace safety, and clean separation between network, state, and engine layers.
+Claude, PersistentStateEngine içindeki GovernorAction.THROTTLE durumuna this.proxyManager.markFailed(this.currentLease.proxyId, 'HTTP_429') çağrısının eklenmesini (Madde #22'nin dar kapsamlı telemetri köprüsü) onaylamıştır. Bu değişiklikle birlikte THROTTLE kararı alındığında proxy sağlık skoru ve http429Count mekanizması düzgün bir şekilde tetiklenecektir. Ek bir doğrulama betiğine gerek duyulmaksızın, kodun mevcut runtime-check.ts akışına dahil edilmesi ve npx tsc --noEmit ile kontrol edilmesi kararlaştırılmıştır.
