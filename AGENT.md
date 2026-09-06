@@ -46,8 +46,21 @@ Kullanıcı              → Onaylar → kod uygulanır → SESSION_INDEX.md'ye 
    içindeki `username`/`password` alanları `getAllMetrics()` çıktısında bulunamaz
    (Madde 23). İhlali fark edince Claude durur ve düzeltmeden devam etmez.
 10. **Üretilen her dosya artifact olarak verilir** — CORE.md, AGENT.md,
-    SESSION_INDEX.md, ARCHITECTURE_ASSESSMENT.md, ve tüm kod dosyaları dahil —
-    chat içine düz metin/kod bloğu olarak yapıştırılmaz. Kullanıcı dosyayı indirir.
+    SESSION_INDEX.md, ARCHITECTURE_ASSESSMENT.md, aktif arşiv parçasına
+    (`session_arşiv.md` veya `_1`/`_2`/...) eklenen taşıma blokları ve tüm kod
+    dosyaları dahil — chat içine düz metin/kod bloğu olarak yapıştırılmaz.
+    Kullanıcı dosyayı indirir.
+11. **SESSION_INDEX.md 400 satır eşiği** *(Bowlera projesinden adapte edildi)* —
+    SESSION_INDEX.md 400 satırı geçtiğinde, **kapanmış/tamamlanmış** içerik
+    (Kapanan Maddeler Geçmişi'ndeki eski girdiler, artık geçerli olmayan Kritik
+    Teknik Karar notları vb.) gerekçesiyle birlikte aktif arşiv parçasına
+    (`session_arşiv.md`, dolarsa `session_arşiv_1.md` → `_2.md` → ...) TAM olarak
+    taşınır. **SESSION_INDEX asla özetlenerek/sıkıştırılarak küçültülmez** —
+    sadece hâlâ açık olan maddeler ve anlık durum SESSION_INDEX'te kalır, kapanan
+    her şey taşınır ama silinmez. Arşiv parçasının **kendisi** hiçbir zaman tam
+    dosya olarak yeniden üretilmez — sadece o turda taşınan **yeni blok** verilir
+    (append mantığı). Bu eşik, henüz açık olan P0/P1/P2 maddelerini kapsamaz;
+    yalnızca zaten kapanmış/tarihe karışmış içerik için geçerlidir.
 
 ---
 
@@ -118,6 +131,21 @@ Her yeni özellik için Claude şu sırayı izler:
 - [ ] Bu değişiklik bir interface sözleşmesini (`IResourceAdapter` vb.) mi bozuyor?
 - [ ] Recovery/queue/lease state machine'i atlayan kısayol var mı? (Madde 5, 6, 8)
 - [ ] Test planı (unit/integration/failure-injection) belirtildi mi? (Madde 30)
+- [ ] *(Yeni)* SESSION_INDEX.md 400 satırı geçti mi? Geçtiyse gerekçeli taşıma
+      aynı turda yapıldı mı, arşivin kendisi yanlışlıkla tam dosya olarak mı
+      üretildi? (Kural #11)
+
+---
+
+## SELF-CORRECTION (SESSION_INDEX / Arşiv — Bowlera'dan adapte edildi)
+
+| Sapma | Ne oluyor | Claude ne yapmalı |
+|---|---|---|
+| SESSION_INDEX 400 satırı geçti ama taşınmadı | Dosya 400 satırı aştı, kapanmış içerik hâlâ içeride, arşive taşınmadı | Dur — gerekçeli taşımayı yap, SESSION_INDEX + yeni arşiv bloğunu aynı turda ver |
+| Arşiv parçası TAM DOSYA olarak yeniden üretildi | Yeni taşıma bloğu yerine arşiv dosyasının tamamı yeniden basıldı | Dur — sadece yeni taşıma bloğunu ver, arşivin geri kalanını asla yeniden üretme |
+| SESSION_INDEX özetlenerek küçültüldü | "Şişmeyi önle" gerekçesiyle madde/gerekçe silinip özetlendi | Dur — silineni geri getir, doğru mekanizma (arşive TAM taşıma) ile yeniden yap |
+| Gerekçesiz madde arşive taşınırken düşürüldü | Kapanan madde arşiv bloğunda gerekçesi olmadan kayboldu | Dur — maddeyi "teyit edilmeli" olarak geri ekle, gerekçeyi kullanıcıdan sor |
+| Checkpoint sorulmadan arşiv/SESSION_INDEX üretildi | Büyük görev sonrası onay alınmadan dosya üretildi | Dur — önce "Checkpoint alayım mı?" sor, onay bekle |
 
 ---
 
@@ -126,11 +154,20 @@ Her yeni özellik için Claude şu sırayı izler:
 ```
 [KARAR BİLDİRİMİ]
 Değişiklik: <ne yapılacak>
-Katman: <engine/network/state/telemetry/policies/adapters/types>
-İlgili madde: <ARCHITECTURE_ASSESSMENT.md #N>
+Katman: <engine/network/state/telemetry/policies/adapters/types/governance>
+İlgili madde: <ARCHITECTURE_ASSESSMENT.md #N, ya da "yok — süreç kuralı">
 Confidence: <HIGH/MEDIUM/LOW>
 Açık varsayımlar: <varsa listele>
 Risk: <bu değişiklik yanlış giderse ne kırılır>
 ```
 
-Onay gelmeden kod üretilmez.
+Onay gelmeden kod (veya governance dosyası) üretilmez.
+
+---
+
+*Not: Bu dosyaya Bowlera projesinin SESSION_INDEX 400-satır eşiği + arşivleme
+mekanizması (Kural #11, ilgili SELF-CHECK maddesi, SELF-CORRECTION tablosu)
+adapte edilerek entegre edildi. Bowlera'ya özgü UI/kod-stili kuralları (bileşen
+satır limiti, animasyon/BSC kuralları) BİLEREK taşınmadı — bunlar TypeScript
+motor koduna uygun değil. Arşiv mekanizmasının CORE.md tarafındaki karşılığı
+(bir §9 gibi) henüz eklenmedi — ayrı onay/tur gerektirir.*

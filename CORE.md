@@ -164,6 +164,34 @@ Policy Engine → Recovery Manager → { Session Engine | Proxy Orchestrator | S
 - "Kod yazıldı" ile "kullanıcı gerçekten kullanabiliyor" ayrı doğrulama
   noktalarıdır (Bowlera projesinden alınan ders — bkz. AGENT.md ilkeleri).
 
+### 7.1 SESSION_INDEX 400 SATIR EŞİĞİ + ARŞİVLEME (Bowlera projesinden adapte edildi)
+
+> AGENT.md Kural #11'in CORE.md tarafındaki karşılığı — mekanizmanın tek
+> kaynağı burasıdır, AGENT.md ona referans verir.
+
+**Adım 1 — Eşik tetiklendiğinde:**
+1. SESSION_INDEX.md her session kapanışında satır sayısı kontrol edilir.
+2. 400 satırı geçtiyse: **kapanmış/tamamlanmış** içerik (Kapanan Maddeler
+   Geçmişi'ndeki eski girdiler, artık geçerliliğini yitirmiş Kritik Teknik
+   Karar notları) TAM METİN olarak aktif arşiv parçasına taşınır
+   (`session_arşiv.md`; o da dolarsa `session_arşiv_1.md` → `_2.md` → ...).
+3. SESSION_INDEX.md'de sadece şunlar kalır: ⚡ Anlık Durum, hâlâ açık olan
+   P0/P1/P2 maddeler, hâlâ geçerli Kritik Teknik Kararlar, Dersler.
+4. Taşınan her blok, gerekçesiyle birlikte arşive eklenir — gerekçesiz
+   taşıma/düşürme yasaktır (bkz. AGENT.md SELF-CORRECTION tablosu).
+5. Arşiv dosyasının **kendisi** hiçbir zaman tam dosya olarak yeniden
+   üretilmez — o turda taşınan **yeni blok** verilir (append). Arşiv
+   parçalandığında (yeni `_N.md` açıldığında) bu bölüm (CORE.md §7.1) ve
+   aşağıdaki Dosya Haritası aynı turda güncellenir, ertelenmez.
+6. SESSION_INDEX **asla özetlenerek/sıkıştırılarak** küçültülmez — eşik
+   aşıldığında tek doğru işlem TAM taşımadır, madde silme/özetleme değil.
+
+**Dosya Haritası (arşiv parçaları):**
+
+| Dosya | Durum |
+|---|---|
+| `session_arşiv.md` | Henüz açılmadı — SESSION_INDEX 400 satırı ilk geçtiğinde oluşturulur |
+
 ---
 
 ## 8. SAĞLIK KONTROLÜ (her session açılışında)
