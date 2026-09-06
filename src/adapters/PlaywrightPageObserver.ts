@@ -19,9 +19,25 @@
 //          (PAGE_CRASH/NETWORK_FAILURE eklemek) mümkün ama bu, jenerik/
 //          domain-bağımsız tasarlanmış bir sözleşme dosyasını değiştirmek
 //          anlamına gelir — ayrı bir onay/tur.
+//          (Madde #22 — BU TUR) `recordSuccess()` köprüsü için, IStateObserver
+//          sözleşmesinde ZATEN VAR OLAN ama şu ana kadar hiç kullanılmayan
+//          `'state'` event kanalı kullanıldı — sözleşme DEĞİŞTİRİLMEDİ,
+//          sadece ilk kez tüketildi. SADECE genuinely başarılı (`response.ok()`,
+//          2xx) response'lar sayılıyor; 3xx/4xx(403/429 dışı)/5xx sınıflandırması
+//          bilinçli olarak dışarıda bırakıldı (bu, Madde #18/#20'nin konusu —
+//          burada ele alınırsa scope creep olur). Simetri gerekçesiyle (429/403
+//          kontrolü HER response'a bakıyor, sadece navigation'a değil) başarı
+//          sinyali de HER response için değerlendiriliyor — aksi halde bir
+//          image/XHR request'i proxy'yi failed işaretleyebilirken sadece
+//          navigation'lar success sayılsaydı, health score yapay şekilde kötü
+//          çıkardı. `responseEnd` timing'i bazı durumlarda (disk cache'ten
+//          servis edilen response) `-1` dönebilir — bu durumda 'state' HİÇ
+//          emit edilmiyor (sahte/geçersiz veri yasağı, Madde 22 disiplini).
 // Dokunma: IStateObserver.ts (sözleşme, DEĞİŞTİRİLMEDİ), PersistentStateEngine.ts
 //          (attachLifecycleObservers artık bu sınıfı kullanıyor + AnomalyPayload'ı
-//          SemanticAnomaly'ye çeviren translateObserverAnomaly() eklendi).
+//          SemanticAnomaly'ye çeviren translateObserverAnomaly() eklendi; BU TUR
+//          ayrıca 'state' event'ini dinleyip recordSuccess()'e bağlayan
+//          handleObserverState() eklendi).
 
 import { Page, Response } from 'playwright';
 import {
@@ -103,6 +119,16 @@ export class PlaywrightPageObserver implements IStateObserver {
       this.emitAnomaly('RATE_LIMIT_EXCEEDED', status, url);
     } else if (status === 403) {
       this.emitAnomaly('ACCESS_RESTRICTED', status, url);
+    } else if (response.ok()) {
+      // Madde #22 (BU TUR): genuinely başarılı response — recordSuccess()
+      // köprüsü için 'state' event'i emit edilir. responseEnd bazı durumlarda
+      // (disk cache) -1 dönebilir; bu durumda hiç emit ETMİYORUZ (sahte veri
+      // yasağı, Madde 22 disiplini) — recordSuccess()'e geçersiz/negatif bir
+      // latency sızmasın.
+      const timing = response.request().timing();
+      if (timing.responseEnd >= 0) {
+        this.emitState(timing.responseEnd, status, url);
+      }
     }
   };
 
@@ -115,6 +141,28 @@ export class PlaywrightPageObserver implements IStateObserver {
     };
     for (const handler of this.anomalyHandlers) {
       (handler as EventHandler<'anomaly'>)(payload);
+    }
+  }
+
+  /**
+   * Madde #22 (BU TUR): `IStateObserver`'ın jenerik `'state'` kanalı
+   * üzerinden bir "başarı" sinyali yayar. `source: 'NETWORK_XHR'`,
+   * `confidenceScore: 1` (ölçülmüş, kesin bir HTTP response — tahmini bir
+   * skor değil). `data` alanı domain-spesifik (latencyMs/statusCode/sourceUrl)
+   * — bu, `IStateObserver`'ın jenerik/domain-bağımsız kalması gerektiği
+   * kuralını ihlal etmez, çünkü tip zaten `Record<string, unknown>` olarak
+   * tanımlı (tüketici taraf — PersistentStateEngine — kendi bildiği alanları okur).
+   */
+  private emitState(latencyMs: number, statusCode: number, sourceUrl: string): void {
+    const payload: StatePayload & { data: Record<string, unknown> } = {
+      id: `state_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+      timestamp: new Date().toISOString(),
+      source: 'NETWORK_XHR',
+      confidenceScore: 1,
+      data: { latencyMs, statusCode, sourceUrl }
+    };
+    for (const handler of this.stateHandlers) {
+      (handler as EventHandler<'state'>)(payload);
     }
   }
 }
