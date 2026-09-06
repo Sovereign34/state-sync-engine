@@ -79,16 +79,28 @@
     kapsamını genişletirken (`getAllMetrics()`'ten `getProxyMetrics()`'e)
     gerçek tüketici kodu görülmeden onay istenmemeliydi.
   - Madde #13, #22, #33: Session 2'den değişmedi.
-  - **Süreç dışı, numarasız bir bug açık:** `src/index.ts:35` —
-    `PersistentStateEngine` constructor'ına `authValidator` argümanı
-    verilmiyor (`tsc --noEmit`: "Found 1 error"). Madde #23 ile ilgisiz,
-    önceden var olan bir composition-root wiring eksikliği; muhtemelen
-    Madde #9'un DI entegrasyonu (`DefaultAuthValidator` composition root'a
-    bağlanmamış). Henüz [KARAR BİLDİRİMİ] ile ele alınmadı.
-- **Sıradaki öncelik:** Madde #9 ertelendiği ve #23 kapandığı için başka
-  bir P0 maddesi seçilmeli (#13 credential encryption, #22 telemetry↔metrics
-  bağlantısı) — ya da yukarıdaki numarasız `authValidator` wiring hatası
-  önce ele alınabilir. Kullanıcıdan teyit bekleniyor.
+  - **Süreç dışı, numarasız `authValidator` wiring bug'ı — DERLEME-DOĞRULAMALI
+    KAPANDI, runtime doğrulaması bekliyor:** `src/index.ts`'te
+    `EngineFactoryOptions`'a zorunlu bir `authValidator: { validationUrl,
+    unauthenticatedUrlPatterns, navigationTimeoutMs? }` alanı eklendi;
+    `createProductionEngine()` bundan bir `DefaultAuthValidator` kurup
+    `PersistentStateEngine`'e 4. argüman olarak geçiyor. `options` parametresinin
+    `= {}` varsayılanı kaldırıldı — `authValidator` verilmeden çağrı derleme
+    zamanında reddediliyor (sessiz fallback yok, kullanıcı kararı). Demo
+    bloğuna (`require.main === module`) gerçek panel/login URL'lerinin yerine
+    açıkça `// TODO` etiketli placeholder'lar eklendi (uydurulmadı).
+    Doğrulama: `npx tsc --noEmit` boş çıktı verdi ("Found 0 errors" — hem bu
+    hem Madde #23'ün credential hataları kapandı, ekran görüntüsüyle teyit
+    edildi). **Sınır:** bu sadece derleme doğrulaması; `DefaultAuthValidator`'ın
+    gerçek bir login akışına karşı runtime'da doğru çalıştığı (placeholder
+    URL'ler gerçek değerlerle değiştirildikten sonra) henüz test edilmedi —
+    projenin kendi dersi gereği ("tsc başarısı tek başına yeterli değil") bu
+    madde "tam kapandı" sayılmıyor.
+- **Sıradaki öncelik:** Madde #9 ertelendiği, #23 kapandığı ve `authValidator`
+  wiring'i derleme-doğrulamalı olduğu için sırada üç seçenek var: (a)
+  `authValidator` wiring'inin runtime doğrulaması (gerçek URL'lerle), (b) #13
+  credential encryption, (c) #22 telemetry↔metrics bağlantısı. Kullanıcıdan
+  teyit bekleniyor.
 
 ---
 
@@ -190,6 +202,16 @@
   `AdvancedProxyManager.ts` içinde yorumla işaretlendi. Madde #22
   (telemetry bağlantısı) ileride sadece `getAllMetrics()`'e bağlanmalı,
   `getProxyMetrics()`'e ASLA (credential log/telemetriye sızar).
+- **(Yeni — Session 3)** `EngineFactoryOptions.authValidator` (`validationUrl`,
+  `unauthenticatedUrlPatterns`, `navigationTimeoutMs?`) **ZORUNLU** alan —
+  bilinçli olarak opsiyonel bırakılmadı. Composition root bu değerleri
+  vermeden `EngineFactory.createProductionEngine()` derleme zamanında
+  reddedilir; `DefaultAuthValidator`'ın kendi constructor'ı da aynı alanlar
+  boşsa ayrıca runtime'da throw eder (iki kat güvence, sessiz fallback yasak
+  — Madde 22 disiplini). Demo bloğundaki `validationUrl`/
+  `unauthenticatedUrlPatterns` gerçek panel/login URL'leri DEĞİL, açıkça
+  `// TODO` etiketli placeholder — production'a alınmadan gerçek değerlerle
+  değiştirilmeli.
 - Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
 - Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
 
@@ -289,7 +311,7 @@
 
 ---
 
-*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya şu an 296 satır —
+*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya şu an 317 satır —
 AGENT.md Kural #11'deki 400 satır arşivleme eşiğinin altında, bu nedenle bu
 turda arşive taşıma yapılmadı. Eşik aşıldığında en eski kapanmış madde
 geçmişi (örn. Madde #1/#5/#6 girdileri) `session_arşiv.md`'ye TAM taşınacak.*
