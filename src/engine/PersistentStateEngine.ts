@@ -26,6 +26,15 @@
 //          kilidi hâlâ true iken FULL_RECOVERY kararına ulaşır ve
 //          `if (this.isRecovering) return;` guard'ı bunu sessizce yutar
 //          (bkz. handleGovernorDecision içindeki KRİTİK yorum).
+//          (Madde #22 — dar kapsam, bu tur) THROTTLE case'i artık
+//          proxyManager.markFailed(proxyId, 'HTTP_429') çağırıyor —
+//          QUARANTINE_PROXY/FULL_RECOVERY case'lerindeki mevcut desenle
+//          birebir aynı guard (`if (this.currentLease)`). Önceden bu çağrı
+//          hiç yapılmıyordu; HTTP_429 anomaly'leri proxy'nin
+//          http429Count/quarantineUntil alanlarına HİÇ yansımıyordu.
+//          recordSuccess() (başarı sinyali) bu turun kapsamı DIŞINDA
+//          bırakıldı — kullanıcı kararı, ayrı bir instrumentation tasarımı
+//          gerektiriyor.
 // Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
 //          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
 //          ProxyLease şekli. AuthValidationPort sözleşmesi
@@ -392,6 +401,12 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     try {
       switch (event.action) {
         case GovernorAction.THROTTLE:
+          // (Madde #22 — dar kapsam, bu tur) Önceden bu case sadece bekliyordu;
+          // proxyManager hiç haberdar edilmiyordu. Diğer iki case'deki
+          // (QUARANTINE_PROXY/FULL_RECOVERY) mevcut desenle birebir aynı guard.
+          if (this.currentLease) {
+            this.proxyManager.markFailed(this.currentLease.proxyId, 'HTTP_429');
+          }
           console.log(`[PersistentStateEngine] Throttle uygulandı. Bekleniyor...`);
           await new Promise(res => setTimeout(res, 10000));
           break;
