@@ -76,3 +76,62 @@ aktif çalışmayla doğrudan ilişkili olduğu için SESSION_INDEX.md'de kaldı
   `getProxyMetrics()`'e) gerçek tüketici kodu (`PersistentStateEngine.ts`)
   görülmeden onay istenmemeliydi — dosya başlığındaki eski bir not
   ("tek tüketici `acquireProxy()` kullanıyor") yanıltıcı çıktı.
+
+----
+## Taşıma 2 (Session 3 — SESSION_INDEX.md 400 satır eşiği, Kural #11)
+
+> Aşağıdaki iki girdi, Madde #22 alt-kapsam kapanışı SESSION_INDEX.md'ye
+> eklenirken eşiği aşmamak için oradan TAM METİN olarak buraya taşındı.
+> Hiçbir şey özetlenmedi/silinmedi.
+
+- **Süreç dışı `authValidator` wiring bug'ı + `AuthValidationNetworkError`
+  fix'i — TAM KAPANDI (Session 3, derleme + runtime + push doğrulaması):**
+  `index.ts`'teki composition-root wiring'i (`EngineFactoryOptions.authValidator`
+  zorunlu alan, `DefaultAuthValidator` DI) tamamlandı. Runtime doğrulaması
+  sırasında kullanıcının verdiği `validationUrl`'in placeholder olduğu ortaya
+  çıktı; bu da `DefaultAuthValidator`'ın ağ/DNS hatasını "unauthenticated"
+  (`false`) ile karıştırdığı GERÇEK bir kusuru açığa çıkardı. Kullanıcı
+  kararıyla yeni `AuthValidationNetworkError` eklendi — `false`/`true` artık
+  SADECE sayfaya gerçekten ulaşılıp pattern değerlendirilebildiğinde dönüyor.
+  Doğrulama: `tsc --noEmit` → 0 hata; `runtime-check-authvalidator-v2.ts` →
+  Test A (çözümlenemeyen domain → `false` değil, `AuthValidationNetworkError`
+  throw, `instanceof` ile teyitli) + Test B (gerçek erişilebilir hedef —
+  GitHub'ın oturum gerektiren sayfası, cookie yok → gerçekten `false`) — ikisi
+  de "✅ Tüm testler geçti" ile ekran görüntüsüyle teyit edildi. `git commit`
+  + `git push` tamamlandı (`1f4e015..948fc44 main -> main`, hata yok — merge
+  sırasında editör takılması bir git/ortam sorunuydu, kodla ilgisizdi).
+  **Sınır:** Test B kullanıcının kendi production `validationUrl`/pattern'lerini
+  DOĞRULAMADI (sadece davranış düzeltmesini kanıtladı) — gerçek değerler
+  geldiğinde ayrıca test edilmeli.
+- **Madde #33 — alt-adım (legacy→src/adapters taşıma + PlaywrightPageObserver
+  429/403 wiring) TAM KAPANDI (Session 3, git mv + tsc + runtime doğrulaması;
+  madde'nin kendisi P0 tablosunda AÇIK kalıyor):** Yeni
+  `PlaywrightPageObserver implements IStateObserver` sınıfı (`src/adapters/`)
+  oluşturuldu — SADECE 429/403 (`RATE_LIMIT_EXCEEDED`/`ACCESS_RESTRICTED`,
+  `IStateObserver.AnomalyType`'a lossless eşlenen iki sinyal) buraya
+  taşındı. `crash`/`requestfailed` (DNS/network) sinyalleri **bilinçli
+  olarak bu turda taşınmadı** — `IStateObserver.AnomalyType`
+  (`RATE_LIMIT_EXCEEDED | ACCESS_RESTRICTED | SESSION_EXPIRED |
+  CHALLENGE_DETECTED`) bunlar için lossless bir karşılık içermiyor, zorla
+  sığdırmak (örn. crash'i `SESSION_EXPIRED` yapmak) yanlış sinyal üretir —
+  genişletme ayrı bir tur. `PersistentStateEngine.attachLifecycleObservers()`
+  bu observer'ı + `AnomalyPayload → SemanticAnomaly` çeviri handler'ını
+  kullanacak şekilde güncellendi; çeviri metodunun `default` dalı beklenmeyen
+  bir `AnomalyType` gelirse sessizce yutmuyor, `console.warn` basıyor
+  (Madde 22 disiplini). **Kod verilirken ortaya çıkan bulgu:**
+  `IStateObserver.ts`/`IResourceAdapter.ts`'in gerçek konumunun
+  `src/adapters/` değil `legacy/` olduğu bulundu — Madde #1'in tam önlemeye
+  çalıştığı legacy-bağımlılığı riskiydi (`find` ile ikisi de teyit edildi).
+  Kullanıcı onayıyla (a) seçildi: iki dosya içerik değiştirilmeden
+  `git mv legacy/IStateObserver.ts src/adapters/IStateObserver.ts` ve aynısı
+  `IResourceAdapter.ts` için uygulandı. Doğrulama: `tsc --noEmit` → önce
+  "Found 2 errors in 2 files" (`PlaywrightPageObserver.ts:33`,
+  `PersistentStateEngine.ts:54`, taşıma öncesi import kırıklığı), taşıma
+  sonrası → 0 hata; `runtime-check.ts` → "✅ Tüm testler geçti" (Madde
+  #6/#7/#8 regresyonu yok); `git status` rename'i %100 eşleşme olarak
+  gösterdi (silme+ekleme değil); `git commit` + `git push` temiz
+  (`484afae..4f4840b main -> main`). **Sınır:** Madde #33'ün kendisi
+  KAPANMADI — sadece bu alt-adım (429/403 wiring + legacy taşıma). Açık
+  kalanlar: crash/requestfailed genişletmesi (ayrı tur) ve `legacy/`
+  klasöründe başka unutulmuş dosya olup olmadığının genel taraması
+  (yapılmadı, sadece bu iki dosya için nokta atışı `find` çalıştırıldı).
