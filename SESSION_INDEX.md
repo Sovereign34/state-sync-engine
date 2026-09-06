@@ -72,10 +72,23 @@
       başarısız olduğu senaryo) henüz yapılmadı. Kullanıcı kararıyla bu
       **projenin sonuna ertelendi** — #9 bu nedenle P0 tablosunda AÇIK
       kalmaya devam ediyor, aktif çalışılmıyor.
-  - Madde #13, #22, #23, #33: Session 2'den değişmedi.
-- **Sıradaki öncelik:** Madde #9 ertelendiği için başka bir P0 maddesi
-  seçilmeli (#13 credential encryption, #22 telemetry↔metrics bağlantısı,
-  veya #23 credential/metrics izolasyonu) — kullanıcıdan teyit bekleniyor.
+  - **Madde #23: KAPANDI (Session 3, tsc + runtime doğrulaması).** Ayrıntı
+    için Kapanan Maddeler Geçmişi. Bu süreçte bir regresyon (`getProxyMetrics()`
+    yanlışlıkla credential'sız tipe çevrilmiş, gerçek proxy authentication'ı
+    kırmıştı) ortaya çıktı ve aynı turda düzeltildi — ders: Madde #23'ün
+    kapsamını genişletirken (`getAllMetrics()`'ten `getProxyMetrics()`'e)
+    gerçek tüketici kodu görülmeden onay istenmemeliydi.
+  - Madde #13, #22, #33: Session 2'den değişmedi.
+  - **Süreç dışı, numarasız bir bug açık:** `src/index.ts:35` —
+    `PersistentStateEngine` constructor'ına `authValidator` argümanı
+    verilmiyor (`tsc --noEmit`: "Found 1 error"). Madde #23 ile ilgisiz,
+    önceden var olan bir composition-root wiring eksikliği; muhtemelen
+    Madde #9'un DI entegrasyonu (`DefaultAuthValidator` composition root'a
+    bağlanmamış). Henüz [KARAR BİLDİRİMİ] ile ele alınmadı.
+- **Sıradaki öncelik:** Madde #9 ertelendiği ve #23 kapandığı için başka
+  bir P0 maddesi seçilmeli (#13 credential encryption, #22 telemetry↔metrics
+  bağlantısı) — ya da yukarıdaki numarasız `authValidator` wiring hatası
+  önce ele alınabilir. Kullanıcıdan teyit bekleniyor.
 
 ---
 
@@ -98,7 +111,6 @@
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
 | 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
-| 23 | Proxy credential/metrics izolasyonu (getAllMetrics sızıntısı) | network/security | açık — doğrulandı: `getAllMetrics(): ProxyMetrics[]` username/password dahil tüm alanları çıplak döndürüyor |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -172,6 +184,12 @@
   net bir tarih/tetikleyici değil — bu kalemin sessizce sonsuza kadar
   ertelenmiş kalmaması için ileride "artık test edelim mi" diye tekrar
   sorulacak.
+- **(Yeni — Session 3)** `getAllMetrics()` (dışa açık/toplu görünüm) ve
+  `getProxyMetrics()` (iç kullanım, gerçek proxy bağlantısı için
+  credential'lı) **kasıtlı olarak farklı davranıyor** — bu ayrım
+  `AdvancedProxyManager.ts` içinde yorumla işaretlendi. Madde #22
+  (telemetry bağlantısı) ileride sadece `getAllMetrics()`'e bağlanmalı,
+  `getProxyMetrics()`'e ASLA (credential log/telemetriye sızar).
 - Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
 - Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
 
@@ -209,6 +227,35 @@
   doğrulama; gerçek Playwright/proxy/`DefaultAuthValidator` entegrasyonu
   test edilmedi, kullanıcı kararıyla projenin sonuna ertelendi (bkz.
   Kritik Teknik Kararlar).
+- **Madde #23 — TAM KAPANDI (Session 3, kod + tsc + runtime doğrulaması):**
+  `getAllMetrics()` ve (o sırada yanlışlıkla) `getProxyMetrics()`, credential
+  alanları (`username`/`password`) olmayan yeni bir `PublicProxyMetrics`
+  tipine (`Omit<ProxyMetrics, 'username' | 'password'>`) çevrildi;
+  `AdvancedProxyManager.ts` içinde ortak bir `toPublicMetrics()` helper'ı
+  ile credential'lar destructure edilip elendi, geri kalan alanlar spread
+  ile KOPYA olarak dönüyor. **Bu turda ortaya çıkan regresyon:**
+  `getProxyMetrics()`'in de credential'sız tipe çevrilmesi
+  `PersistentStateEngine.ts`'in gerçek proxy authentication'ı için
+  `metrics.username`/`metrics.password`'e ihtiyaç duyan tek mekanizmasını
+  kırdı (`tsc --noEmit` ile yakalandı, `src/index.ts`/`PersistentStateEngine.ts`
+  derleme hatası verdi). Kullanıcı onayıyla `getProxyMetrics()` credential'lı
+  hâline GERİ ALINDI (İÇ KULLANIM, motorun gerçek proxy bağlantısı için) —
+  sadece `getAllMetrics()` (dışa açık/toplu görünüm) `PublicProxyMetrics`
+  dönmeye devam ediyor. Doğrulama sırası: (1) `tsc --noEmit` → "Found 1
+  error", kalan tek hatanın Madde #23 ile ilgisiz, önceden var olan bir
+  `authValidator` wiring eksikliği olduğu teyit edildi (credential tip
+  hataları tamamen kayboldu); (2) `runtime-check-madde23.ts` gerçek
+  `AdvancedProxyManager` sınıfıyla (mock değil) çalıştırıldı, ekran
+  görüntüsüyle "✅ Tüm testler geçti" teyit edildi — Test 1: `getAllMetrics()`
+  çıktısında `username`/`password` alanları hem `in` kontrolüyle hem
+  serialize edilmiş string kontrolüyle YOK; Test 2: `getProxyMetrics()`
+  credential'ları hâlâ İÇERİYOR (regresyon fix'i doğrulandı); Test 3:
+  `getAllMetrics()` çıktısını mutasyona uğratmak sınıfın iç state'ini
+  etkilemiyor (kopya, referans değil). **Ders (bu turda öğrenildi):**
+  Madde #23'ün kapsamını genişletirken (`getAllMetrics()`'ten
+  `getProxyMetrics()`'e) gerçek tüketici kodu (`PersistentStateEngine.ts`)
+  görülmeden onay istenmemeliydi — dosya başlığındaki eski bir not
+  ("tek tüketici `acquireProxy()` kullanıyor") yanıltıcı çıktı.
 
 ---
 
@@ -234,3 +281,15 @@
   doğrulanması, üst semptomun (auth-validation başarısızlığı) çözüldüğü
   anlamına gelmez — kapsam daraldıkça madde AÇIK kalmaya devam eder, teşhis
   bir sonraki katmana taşınır; erken kapanış iddiası yasak.
+- **(Yeni — Session 3)** Bir maddenin kapsamını genişletmek (örn. "aynı
+  dosyada, aynı sızıntıya sahip ikinci bir metod daha var") için gerçek
+  tüketici kodu görülmeden onay istemek riskli — dosya başlığındaki eski
+  bir not güncel gerçeği yansıtmayabilir, genişletme onayı SADECE gerçek
+  kod görüldükten sonra istenmeli.
+
+---
+
+*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya şu an 296 satır —
+AGENT.md Kural #11'deki 400 satır arşivleme eşiğinin altında, bu nedenle bu
+turda arşive taşıma yapılmadı. Eşik aşıldığında en eski kapanmış madde
+geçmişi (örn. Madde #1/#5/#6 girdileri) `session_arşiv.md`'ye TAM taşınacak.*
