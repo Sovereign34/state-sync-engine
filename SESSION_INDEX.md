@@ -43,15 +43,23 @@
     varsaymıştım), sonra `PersistentStateEngine.ts` ve
     `AdvancedProxyManager.ts`'in tam içeriği görülerek düzeltildi.
     `npx tsc --noEmit` sıfır hatayla doğruladı.
-  - **Push durumu:** Bu session'ın sonunda `git push` önerildi ama sonucu bu
-    dosyanın yazıldığı an itibarıyla kullanıcı tarafından teyit edilmedi —
-    bir sonraki session açılışında önce `git status`/`git log` ile push'un
-    gerçekten gidip gitmediği doğrulanmalı.
-- **Sıradaki öncelik:** Madde #8 (Recovery transaction modeli,
-  CAPTURE→...→COMMIT) — P0 sırasında #7'den sonraki açık madde. Alternatif
-  olarak #7/#6'nın runtime doğrulaması (gerçek bir anomaly/recovery
-  senaryosu tetiklenerek) de öncelik olarak seçilebilir, kullanıcıya
-  sorulmalı.
+  - **Push durumu:** Kullanıcı tarafından teyit edildi — `git push` başarılı.
+  - Madde #8: **kod tarafı tamam.** `createSessionWithFreshState()`
+    "release-then-acquire"den "acquire-then-commit" (make-before-break)
+    transaction modeline geçirildi — yeni proxy/context/page tamamen hazır
+    olup commit edilene kadar eski context/lease'e dokunulmuyor; herhangi
+    bir adım patlarsa yeni kaynaklar rollback edilir, eski oturum bozulmadan
+    kalır. `captureCurrentState`/`applyPreservedState`, `this.context`/
+    `this.page` okuyan yan etkili metodlardan parametre alan saf
+    fonksiyonlara (`captureState`/`applyState`) dönüştürüldü. **Derleme
+    doğrulaması henüz yapılmadı** (kullanıcı `tsc --noEmit` çalıştırmadı).
+    **Davranış değişikliği:** proxy release sırası tersine döndü — artık
+    `ROTATE_SESSION_ONLY` aynı proxy'yi geri seçemiyor (öncesinde
+    mümkündü), gerçek rotasyon garanti ediliyor.
+- **Sıradaki öncelik:** Kullanıcının `tsc --noEmit` çalıştırıp Madde #8'in
+  derlemesini doğrulaması. Ardından #7/#6/#8'in üçünün de runtime
+  doğrulaması (gerçek bir anomaly/recovery senaryosu tetiklenerek) veya
+  Madde #9 (state restore validation) — kullanıcıya sorulmalı.
 
 ---
 
@@ -61,7 +69,7 @@
 |---|---|---|---|
 | 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı, runtime doğrulaması bekleniyor |
 | 7 | Governor↔RecoveryExecutor command interface | engine | kod tarafı tamam, derleme doğrulandı (`tsc --noEmit` temiz), runtime doğrulaması bekleniyor (port'u implement eden gerçek bir tüketici yok) |
-| 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | açık — sıradaki öncelik adayı |
+| 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | kod tarafı tamam (make-before-break transaction), derleme ve runtime doğrulaması bekleniyor |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
 | 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
