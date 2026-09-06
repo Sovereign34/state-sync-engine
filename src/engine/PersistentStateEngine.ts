@@ -43,9 +43,13 @@
 //          http429Count'unu yanlışlıkla artırır — yanlış telemetri, Madde 22
 //          disiplini ihlali). Bu guard olmadan yazılan ilk taslakta bu hata
 //          vardı, kod verilmeden önce yakalanıp düzeltildi.
-//          recordSuccess() (başarı sinyali) bu turun kapsamı DIŞINDA
-//          bırakıldı — kullanıcı kararı, ayrı bir instrumentation tasarımı
-//          gerektiriyor.
+//          (Madde #22 — BU TUR) recordSuccess() köprüsü eklendi:
+//          PlaywrightPageObserver artık genuinely başarılı (response.ok(),
+//          2xx) response'larda IStateObserver'ın önceden var olan ama hiç
+//          kullanılmayan 'state' kanalını emit ediyor; bu dosya bunu
+//          handleObserverState() ile dinleyip proxyManager.recordSuccess()'e
+//          bağlıyor. SADECE 2xx sayılıyor (3xx/4xx-403/429 dışı/5xx
+//          sınıflandırması Madde #18/#20'nin kapsamı, scope creep önlendi).
 // Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
 //          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
 //          ProxyLease şekli. AuthValidationPort sözleşmesi
@@ -58,6 +62,9 @@
 //          bir onay/tur gerektirir, bu KARAR BİLDİRİMİ'nin kapsamı dışıdır.
 //          DAVRANIŞ DEĞİŞİKLİĞİ (Madde #8'den, değişmedi): proxy release
 //          sırası "acquire yeni → release eski" (önceden tersiydi).
+// (Madde #22 — BU TUR) attachLifecycleObservers(): PlaywrightPageObserver'ın
+//          'state' event'i handleObserverState() ile dinlenip
+//          proxyManager.recordSuccess()'e bağlandı — bkz. handleObserverState.
 // (Madde #33 — ilk adım, önceki tur) attachLifecycleObservers(): 429/403 tespiti
 //          artık ham page.on('response', ...) DEĞİL, IStateObserver sözleşmesini
 //          implement eden PlaywrightPageObserver (adapters/PlaywrightPageObserver.ts)
@@ -71,7 +78,7 @@ import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
 import { PlaywrightPageObserver } from '../adapters/PlaywrightPageObserver';
-import { AnomalyPayload } from '../adapters/IStateObserver';
+import { AnomalyPayload, StatePayload } from '../adapters/IStateObserver';
 import {
   PreservedSessionState,
   GovernorAction,
@@ -329,6 +336,8 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     // ham Playwright event'ini görmüyor, sadece çeviriyi yapıyor.
     const observer = new PlaywrightPageObserver(page);
     observer.on('anomaly', (payload) => this.translateObserverAnomaly(payload));
+    // Madde #22 (BU TUR): recordSuccess() köprüsü — bkz. handleObserverState().
+    observer.on('state', (payload) => this.handleObserverState(payload));
     observer.start();
 
     // BİLİNÇLİ OLARAK TAŞINMADI (bkz. PlaywrightPageObserver.ts başlığı):
@@ -401,6 +410,26 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       sourceUrl,
       timestamp: new Date(payload.timestamp).getTime()
     });
+  }
+
+  /**
+   * Madde #22 (BU TUR — recordSuccess() köprüsü): PlaywrightPageObserver'ın
+   * 'state' event'i (SADECE genuinely başarılı, response.ok() olan
+   * response'lar için, geçerli/negatif-olmayan bir responseEnd timing'i ile)
+   * bu metoda düşer. `this.currentLease` yoksa (örn. observer henüz eski bir
+   * page'e bağlıyken commit arası bir an) sessizce no-op — proxy'siz bir
+   * "başarı" kaydı anlamsız olurdu. `latencyMs` beklenmeyen bir şekilde
+   * sayısal değilse veya negatifse de kayıt YAPILMAZ (sahte veri yasağı,
+   * Madde 22 disiplini) — bu durum normalde PlaywrightPageObserver
+   * tarafında zaten filtrelenir, burada ikinci bir güvence katmanı.
+   */
+  private handleObserverState(payload: StatePayload & { data: Record<string, unknown> }): void {
+    if (!this.currentLease) return;
+
+    const latencyMs = payload.data.latencyMs;
+    if (typeof latencyMs !== 'number' || latencyMs < 0) return;
+
+    this.proxyManager.recordSuccess(this.currentLease.proxyId, latencyMs);
   }
 
   private async handleGovernorDecision(event: GovernorDecisionEvent): Promise<void> {
