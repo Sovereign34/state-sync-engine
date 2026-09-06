@@ -13,26 +13,29 @@
 - **Session:** 3 (devam ediyor)
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - Madde #7: **kod tarafı tamam + derleme doğrulandı.** `git pull`
-    ile `AdaptiveGovernor.ts` (+++---, 34 satır) ve `PersistentStateEngine.ts`
-    (++--, 24 satır) değişiklikleri repoya gerçekten yansımış (fast-forward
-    ile teyit edildi, iddia değil). Değişiklik:
-    - `PersistentStateEngine`, `RecoveryCommandPort`'u gerçekten implement
-      ediyor (`handleDecision()` metodu, mevcut `handleGovernorDecision`
-      mantığını kullanarak).
-    - Constructor'da `governor.setCommandPort(this)` ile kendini enjekte
-      ediyor.
-    - `AdaptiveGovernor`'a constructor-zamanı zorunluluğu olmayan bir
-      `setCommandPort()` setter eklendi.
-    - Eski `.on('decision', ...)` kaydı **kaldırıldı**.
-    - `npx tsc --noEmit` **çalıştırıldı ve ekran görüntüsüyle teyit edildi**
-      — komut ile sıradaki `$` istemi arasında hata satırı yok, Codespaces
-      durum çubuğu 0 hata gösteriyor. **Runtime doğrulaması hâlâ açık.**
-  - Madde #6, #8, #9, #13, #22, #23, #33: Session 2'den değişmedi (aşağıdaki
-    tabloya bakınız).
-- **Sıradaki öncelik:** #6/#7/#8'in üçünün birden runtime doğrulaması
-  (gerçek bir anomaly/recovery senaryosu tetiklenerek) veya Madde #9
-  (state restore validation) — kullanıcıya sorulmalı.
+  - **Madde #6, #7, #8: KAPANDI.** `runtime-check.ts` (mock `Browser` +
+    mock `AdvancedProxyManager` ile Governor↔Engine mantığını izole eden
+    doğrulama betiği) `npx tsx runtime-check.ts` ile çalıştırıldı, ekran
+    görüntüsüyle teyit edildi:
+    - Test 1 (iki farklı anomaly art arda enqueue): `acquireProxy()` tam 2
+      kez çağrıldı — ikinci decision kaybolmadı (#6), legacy
+      `.on('decision',...)` hâlâ genel EventEmitter olarak tetikleniyor
+      ama `PersistentStateEngine` artık ondan değil `RecoveryCommandPort`
+      üzerinden işliyor (#7).
+    - Test 2 (kasıtlı `newContext()` hatası): eski context DEĞİŞMEDİ
+      (rollback çalıştı), başarısız denemenin lease'i release edildi —
+      sızıntı yok (#8).
+    - Sonuç satırı: "✅ Tüm testler geçti" (`failures === 0` olmadan bu
+      satır basılmaz).
+    - **Kapsam sınırı:** bu doğrulama gerçek Playwright/proxy altyapısını
+      test ETMEDİ — Governor/Engine arası sıralama ve komut-yönlendirme
+      mantığını mock'larla izole doğruladı. Gerçek network/browser
+      entegrasyonunun sağlıklı çalıştığı ayrı bir doğrulama konusu.
+  - Madde #9, #13, #22, #23, #33: Session 2'den değişmedi.
+- **Sıradaki öncelik:** Madde #9 — state restore validation (cookie
+  restore edildi ama uygulama authenticate olmadı senaryosu,
+  `PersistentStateEngine.applyState()`'teki yutulan hata da bu maddenin
+  kapsamına giriyor, bkz. dosya başlığındaki "KALAN RİSK" notu).
 
 ---
 
@@ -40,9 +43,6 @@
 
 | # | Madde | Katman | Durum |
 |---|---|---|---|
-| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı, runtime doğrulaması bekleniyor |
-| 7 | Governor↔RecoveryExecutor command interface | engine | kod tarafı tamam + derleme doğrulandı (port artık `PersistentStateEngine.handleDecision()` ile implement ediliyor, `AdaptiveGovernor.setCommandPort()` eklendi, legacy `.on('decision',...)` kaldırıldı, `tsc --noEmit` temiz) — runtime doğrulaması bekleniyor |
-| 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | kod tarafı tamam (make-before-break transaction), derleme ve runtime doğrulaması bekleniyor |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
 | 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
@@ -117,11 +117,19 @@
 - **Madde #5** (Session 1 kod, Session 2 doğrulama — KAPANDI).
 - **Madde #6** (Session 1 kod, Session 2 derleme doğrulaması) — runtime
   doğrulaması hâlâ açık.
-- **Madde #7 — derleme doğrulaması** (Session 3): `PersistentStateEngine`
-  `RecoveryCommandPort`'u implement etti, `AdaptiveGovernor.setCommandPort()`
-  eklendi, legacy `.on('decision',...)` kaldırıldı. `git pull` diff
-  istatistiği ve `tsc --noEmit` ekran görüntüsüyle teyit edildi (temiz,
-  0 hata). Madde tam kapanmadı — runtime doğrulaması hâlâ P0 tablosunda açık.
+- **Madde #6, #7, #8 — TAM KAPANDI** (Session 3, runtime doğrulaması):
+  `runtime-check.ts` (mock `Browser`/`AdvancedProxyManager` ile Governor↔Engine
+  mantığını izole eden betik) `npx tsx` ile çalıştırıldı, ekran görüntüsüyle
+  teyit edildi. Test 1: iki farklı anomaly art arda enqueue edildiğinde
+  `acquireProxy()` tam 2 kez çağrıldı (#6 — ikinci decision kaybolmadı),
+  legacy `.on('decision',...)` genel EventEmitter olarak çalışmaya devam
+  ediyor ama `PersistentStateEngine` artık `RecoveryCommandPort` üzerinden
+  işliyor (#7). Test 2: kasıtlı `newContext()` hatasında eski context
+  değişmedi ve başarısız denemenin lease'i release edildi (#8 — rollback,
+  sızıntı yok). Sonuç: "✅ Tüm testler geçti". **Sınır:** gerçek
+  Playwright/proxy entegrasyonu değil, Governor/Engine mantığı mock'larla
+  doğrulandı — bu ayrım not düşülür, "tam entegrasyon test edildi" iddia
+  edilmez.
 
 ---
 
