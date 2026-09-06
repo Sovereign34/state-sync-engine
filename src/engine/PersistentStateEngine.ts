@@ -2,12 +2,23 @@
 // Amaç:    Browser context/page yaşam döngüsünü, proxy lease alımını ve
 //          cookie/localStorage/sessionStorage state sürekliliğini yönetir.
 // Katman:  engine
-// Risk:    Lease hiç release edilmezse proxy havuzu zamanla tükenir (leak);
-//          getProxyMetrics() bilinmeyen bir proxyId için undefined dönerse
-//          context proxy'siz (fail-open) kurulur.
+// Risk:    Madde #8 çözümüyle bu risk kapatıldı: createSessionWithFreshState()
+//          artık "make-before-break" transaction modeliyle çalışıyor — yeni
+//          proxy/context/page TAMAMEN hazır olup commit edilene kadar eski
+//          context/lease'e dokunulmuyor. Herhangi bir adım (acquireProxy,
+//          newContext, newPage, applyState) patlarsa yeni kaynaklar rollback
+//          edilir, eski oturum bozulmadan kalır ve hata yukarı fırlatılır
+//          (Madde 22 — sessiz fallback yasak).
+//          KALAN RİSK: applyState() içindeki cookie/storage hatası hâlâ
+//          yutulup sadece loglanıyor (orijinal davranışla aynı) — bu, context
+//          proxy'li ama state'siz commit edilebileceği anlamına gelir; Madde
+//          #9 (state restore validation) bunu ele alacak, kapsam dışı bırakıldı.
 // Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
 //          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
-//          ProxyLease şekli.
+//          ProxyLease şekli. DAVRANIŞ DEĞİŞİKLİĞİ: proxy release sırası artık
+//          "acquire yeni → release eski" (önceden tersiydi) — bkz. Madde #8
+//          KARAR BİLDİRİMİ, bu ROTATE_SESSION_ONLY'nin artık aynı proxy'yi
+//          geri seçmesini engelliyor.
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
@@ -46,11 +57,18 @@ export class PersistentStateEngine {
     await this.createSessionWithFreshState(false);
   }
 
-  private async captureCurrentState(): Promise<void> {
-    if (!this.context || !this.page) return;
+  /**
+   * Madde #8 Çözümü: captureCurrentState artık `this.context`/`this.page`'i
+   * doğrudan okumuyor — parametre olarak verilen context/page'den state
+   * çıkarıyor ve döndürüyor (saf fonksiyon). Bu, transaction'ın "hazırlık"
+   * aşamasında instance state'ini erken değiştirmeden çalışabilmesi için şart.
+   * Hata durumunda (Madde 22 — sahte veri yasak) boş bir state döndürmek
+   * yerine, en son bilinen iyi durumu (this.preservedState) korur.
+   */
+  private async captureState(context: BrowserContext, page: Page): Promise<PreservedSessionState> {
     try {
-      const rawCookies = await this.context.cookies();
-      this.preservedState.cookies = rawCookies.map(c => ({
+      const rawCookies = await context.cookies();
+      const cookies = rawCookies.map(c => ({
         name: c.name,
         value: c.value,
         domain: c.domain,
@@ -61,7 +79,7 @@ export class PersistentStateEngine {
         sameSite: c.sameSite as 'Strict' | 'Lax' | 'None'
       }));
 
-      const storageData = await this.page.evaluate(() => {
+      const storageData = await page.evaluate(() => {
         const ls: Record<string, string> = {};
         const ss: Record<string, string> = {};
         for (let i = 0; i < localStorage.length; i++) {
@@ -75,80 +93,139 @@ export class PersistentStateEngine {
         return { ls, ss };
       });
 
-      this.preservedState.localStorage = storageData.ls;
-      this.preservedState.sessionStorage = storageData.ss;
+      return {
+        cookies,
+        localStorage: storageData.ls,
+        sessionStorage: storageData.ss
+      };
     } catch (error) {
-      console.warn('[PersistentStateEngine] State yakalama sırasında hata oluştu:', error);
+      console.warn(
+        '[PersistentStateEngine] State yakalama sırasında hata oluştu — son bilinen iyi state korunacak:',
+        error
+      );
+      return this.preservedState;
     }
   }
 
-  private async applyPreservedState(): Promise<void> {
-    if (!this.context || !this.page) return;
-
+  /**
+   * Madde #8 Çözümü: applyPreservedState de aynı şekilde parametre alan
+   * saf fonksiyona dönüştürüldü — yeni (henüz commit edilmemiş) context/page'e
+   * state uygular.
+   */
+  private async applyState(context: BrowserContext, page: Page, state: PreservedSessionState): Promise<void> {
     try {
-      if (this.preservedState.cookies.length > 0) {
-        await this.context.addCookies(this.preservedState.cookies);
+      if (state.cookies.length > 0) {
+        await context.addCookies(state.cookies);
       }
 
-      await this.page.addInitScript((state: { ls: Record<string, string>; ss: Record<string, string> }) => {
-        for (const [k, v] of Object.entries(state.ls)) {
+      await page.addInitScript((s: { ls: Record<string, string>; ss: Record<string, string> }) => {
+        for (const [k, v] of Object.entries(s.ls)) {
           localStorage.setItem(k, v);
         }
-        for (const [k, v] of Object.entries(state.ss)) {
+        for (const [k, v] of Object.entries(s.ss)) {
           sessionStorage.setItem(k, v);
         }
-      }, { ls: this.preservedState.localStorage, ss: this.preservedState.sessionStorage });
+      }, { ls: state.localStorage, ss: state.sessionStorage });
     } catch (error) {
+      // Madde 22 notu: hata burada yutulup sadece loglanıyor (orijinal davranışla
+      // aynı) — yani context state'siz commit edilebilir. Bunu Madde #8 kapsamında
+      // ÇÖZMÜYORUM (transaction'ın konusu proxy/context/lease tutarlılığı; state
+      // içeriğinin doğrulanması Madde #9'un konusu, ayrı KARAR BİLDİRİMİ gerekir).
       console.warn('[PersistentStateEngine] State re-hydration sırasında hata oluştu:', error);
     }
   }
 
+  /**
+   * Madde #8 Çözümü — Recovery Transaction Modeli (make-before-break):
+   *
+   *   1. CAPTURE  — mevcut context/page'den state çıkar (gerekiyorsa)
+   *   2. ACQUIRE  — yeni proxy lease'i al (ESKİ LEASE'E HENÜZ DOKUNULMAZ)
+   *   3. CREATE   — yeni context + page kur
+   *   4. APPLY    — state'i yeni context/page'e uygula
+   *   5. COMMIT   — buraya kadar hata yoksa instance state'i değiştir,
+   *                 SONRA eski context'i kapat ve eski lease'i bırak
+   *
+   * Adım 2-4 arasında herhangi bir hata olursa: yeni oluşturulan kaynaklar
+   * (lease/context) rollback edilir, `this.context`/`this.page`/`this.currentLease`
+   * HİÇ DEĞİŞMEMİŞ olarak kalır (eski oturum sapasağlam), hata yukarı fırlatılır.
+   * Bu, önceki modeldeki "eski context zaten kapatılmış + eski lease zaten
+   * bırakılmışken acquireProxy() patlıyor, motor kurtarılamaz hale geliyor"
+   * sorununu ortadan kaldırır.
+   */
   private async createSessionWithFreshState(preserve: boolean = true): Promise<void> {
-    if (preserve) {
-      await this.captureCurrentState();
+    let stateToApply = this.preservedState;
+    if (preserve && this.context && this.page) {
+      stateToApply = await this.captureState(this.context, this.page);
     }
 
-    if (this.context) {
-      await this.context.close().catch(() => {});
-    }
+    const previousContext = this.context;
+    const previousLease = this.currentLease;
 
-    // Eski lease varsa yeni proxy alınmadan önce bırakılır (Madde #5).
-    // Not: acquireProxy() burada fail olursa eski lease zaten release edilmiş
-    // olur — bu risk kapsam dışı bırakıldı, Madde #8 (recovery transaction
-    // modeli) bunu tam çözecek.
-    if (this.currentLease) {
-      this.proxyManager.releaseProxy(this.currentLease.leaseId);
-      this.currentLease = undefined;
-    }
+    let newLease: ProxyLease | undefined;
+    let newContext: BrowserContext | undefined;
 
-    const lease = this.proxyManager.acquireProxy(this.sessionId);
-    this.currentLease = lease;
+    try {
+      // 2. ACQUIRE — Madde #8: eski lease bırakılmadan ÖNCE yeni proxy alınır.
+      // Davranış değişikliği (bkz. dosya başlığı): bu artık aynı proxy'nin
+      // geri seçilmesini engeller, gerçek rotasyon garanti eder.
+      newLease = this.proxyManager.acquireProxy(this.sessionId);
 
-    const metrics = this.proxyManager.getProxyMetrics(lease.proxyId);
-    if (!metrics) {
-      // Sahte veri/sessiz fallback yasak (Madde 22) — bu durum context'in
-      // proxy'siz kurulacağı anlamına gelir, sessizce geçilmez.
-      console.warn(
-        `[PersistentStateEngine] Lease alındı (proxyId=${lease.proxyId}) ama getProxyMetrics() sonuç döndürmedi — context proxy'siz kurulacak.`
+      const metrics = this.proxyManager.getProxyMetrics(newLease.proxyId);
+      if (!metrics) {
+        // Sahte veri/sessiz fallback yasak (Madde 22) — bu durum context'in
+        // proxy'siz kurulacağı anlamına gelir, sessizce geçilmez.
+        console.warn(
+          `[PersistentStateEngine] Lease alındı (proxyId=${newLease.proxyId}) ama getProxyMetrics() sonuç döndürmedi — context proxy'siz kurulacak.`
+        );
+      }
+
+      const proxyOptions = metrics ? {
+        server: metrics.server,
+        username: metrics.username,
+        password: metrics.password
+      } : undefined;
+
+      // 3. CREATE
+      newContext = await this.browser.newContext({
+        proxy: proxyOptions,
+        viewport: { width: 1920, height: 1080 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      });
+
+      const newPage = await newContext.newPage();
+
+      // 4. APPLY
+      await this.applyState(newContext, newPage, stateToApply);
+
+      // 5. COMMIT — buraya kadar hiçbir şey patlamadı, artık instance state'i
+      // değiştiriyoruz. Bu noktadan sonra rollback YOK — eski kaynaklar temizlenir.
+      this.attachLifecycleObservers(newPage);
+      this.context = newContext;
+      this.page = newPage;
+      this.currentLease = newLease;
+      this.preservedState = stateToApply;
+
+      if (previousContext) {
+        await previousContext.close().catch(() => {});
+      }
+      if (previousLease) {
+        this.proxyManager.releaseProxy(previousLease.leaseId);
+      }
+    } catch (error) {
+      // ROLLBACK — yarım kalan yeni kaynaklar temizlenir, eski oturuma
+      // HİÇ DOKUNULMADI (this.context/this.page/this.currentLease değişmedi).
+      console.error(
+        '[PersistentStateEngine] Recovery transaction başarısız oldu, önceki oturum korunuyor:',
+        error
       );
+      if (newContext) {
+        await newContext.close().catch(() => {});
+      }
+      if (newLease) {
+        this.proxyManager.releaseProxy(newLease.leaseId);
+      }
+      throw error;
     }
-
-    const proxyOptions = metrics ? {
-      server: metrics.server,
-      username: metrics.username,
-      password: metrics.password
-    } : undefined;
-
-    this.context = await this.browser.newContext({
-      proxy: proxyOptions,
-      viewport: { width: 1920, height: 1080 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    });
-
-    await this.applyPreservedState();
-
-    this.page = await this.context.newPage();
-    this.attachLifecycleObservers(this.page);
   }
 
   private attachLifecycleObservers(page: Page): void {
