@@ -12,6 +12,12 @@
 //          adapters/DefaultAuthValidator.ts (varsayılan implementasyon),
 //          governor-command.types.ts (AnomalyType.AUTH_VALIDATION_FAILED bu
 //          dosyadaki hatayla birlikte, ayrı bir KARAR olarak eklendi).
+//
+// (Session 3 eklentisi) AuthValidationNetworkError: runtime doğrulaması
+// sırasında bulundu — DefaultAuthValidator'ın eski hâli, ağ/DNS/timeout
+// hatalarını da "unauthenticated" (false) ile aynı kefeye koyuyordu. Bu,
+// "sayfaya hiç ulaşamadım" ile "sayfaya ulaştım ama login'e yönlendirildim"
+// arasındaki farkı sessizce yutuyordu — ayrı bir hata tipiyle ayrıştırıldı.
 
 import { Page } from 'playwright';
 import { PreservedSessionState } from './governor-command.types';
@@ -44,5 +50,30 @@ export class AuthRestoreFailedError extends Error {
     super(message);
     this.name = 'AuthRestoreFailedError';
     Object.setPrototypeOf(this, AuthRestoreFailedError.prototype);
+  }
+}
+
+/**
+ * (Session 3) `AuthValidationPort.validate()` implementasyonları, doğrulama
+ * SIRASINDA meydana gelen ve auth durumu hakkında hiçbir sonuç ÇIKARILAMAYAN
+ * durumlarda (DNS/timeout/bağlantı hatası, ya da hedef sayfa beklenmeyen bir
+ * HTTP durumu döndürdüğünde) bunu fırlatmalı — `false` DÖNDÜRMEMELİ.
+ *
+ * `false`, SADECE hedef sayfaya gerçekten ulaşılıp `unauthenticatedUrlPatterns`
+ * ile eşleşme kontrolü yapılabildiğinde ve eşleşme BULUNDUĞUNDA dönmelidir.
+ * Bu ayrım olmadan, geçici bir ağ sorunu "restore geçersiz" ile karıştırılıp
+ * asıl auth durumu hiç bilinmeden bir sonuca varılmış olurdu.
+ *
+ * `PersistentStateEngine.createSessionWithFreshState()`'in genel rollback
+ * `catch`'i bu hatayı da (tip ayrımı yapmadan) yakalayıp mevcut make-before-
+ * break zincirini temizler; sadece `AuthRestoreFailedError` özel bir
+ * `AUTH_VALIDATION_FAILED` anomaly enqueue'u tetikler — bu hata TETİKLEMEZ
+ * (kasıtlı: ağ hatası, auth hatası değildir).
+ */
+export class AuthValidationNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthValidationNetworkError';
+    Object.setPrototypeOf(this, AuthValidationNetworkError.prototype);
   }
 }
