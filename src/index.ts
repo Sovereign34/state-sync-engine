@@ -2,19 +2,34 @@ import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { AdvancedProxyManager } from './network/AdvancedProxyManager';
 import { AdaptiveGovernor } from './engine/AdaptiveGovernor';
 import { PersistentStateEngine } from './engine/PersistentStateEngine';
+import { DefaultAuthValidator } from './adapters/DefaultAuthValidator';
 
 export * from './types';
 export { AdvancedProxyManager } from './network/AdvancedProxyManager';
 export { AdaptiveGovernor } from './engine/AdaptiveGovernor';
 export { PersistentStateEngine } from './engine/PersistentStateEngine';
+export { DefaultAuthValidator } from './adapters/DefaultAuthValidator';
 
 export interface EngineFactoryOptions {
   proxies?: Array<{ server: string; username?: string; password?: string }>;
   headless?: boolean;
+  /**
+   * ZORUNLU (Madde #9 DI gereksinimi, composition-root tarafı). Bilinçli
+   * olarak opsiyonel BIRAKILMADI — burada bir varsayılan/sessiz fallback
+   * tanımlamak (örn. "verilmezse her zaman true dön") Madde #9'un çözmeye
+   * çalıştığı "sahte authenticated" durumunu geri getirir (Madde 22 ihlali).
+   * `DefaultAuthValidator`'ın kendisi de bu alanlar boşsa constructor'da
+   * ayrıca throw eder — bu iki kat güvence (derleme zamanı + runtime).
+   */
+  authValidator: {
+    validationUrl: string;
+    unauthenticatedUrlPatterns: Array<string | RegExp>;
+    navigationTimeoutMs?: number;
+  };
 }
 
 export class EngineFactory {
-  public static async createProductionEngine(options: EngineFactoryOptions = {}): Promise<{
+  public static async createProductionEngine(options: EngineFactoryOptions): Promise<{
     browser: Browser;
     proxyManager: AdvancedProxyManager;
     governor: AdaptiveGovernor;
@@ -22,7 +37,18 @@ export class EngineFactory {
   }> {
     const proxyManager = new AdvancedProxyManager(options.proxies || []);
     const governor = new AdaptiveGovernor();
-    
+
+    // Madde #9 DI zorunluluğu (composition-root tarafı, bkz. EngineFactoryOptions
+    // üzerindeki not): validationUrl/unauthenticatedUrlPatterns burada TAHMİN
+    // EDİLMEDİ — options.authValidator zorunlu olduğu için çağıran taraf
+    // vermek zorunda; boş/eksikse DefaultAuthValidator constructor'ı zaten
+    // açıkça throw eder (sessiz fallback yok).
+    const authValidator = new DefaultAuthValidator(
+      options.authValidator.validationUrl,
+      options.authValidator.unauthenticatedUrlPatterns,
+      options.authValidator.navigationTimeoutMs
+    );
+
     const browser = await chromium.launch({
       headless: options.headless ?? false,
       args: [
@@ -32,7 +58,7 @@ export class EngineFactory {
       ]
     });
 
-    const engine = new PersistentStateEngine(browser, proxyManager, governor);
+    const engine = new PersistentStateEngine(browser, proxyManager, governor, authValidator);
     await engine.initialize();
 
     return {
@@ -56,7 +82,15 @@ if (require.main === module) {
             username: 'brd-customer-xxxx-zone-residential',
             password: 'your_password'
           }
-        ]
+        ],
+        // TODO: aşağıdaki iki alanı gerçek sistemin URL'leriyle değiştir.
+        // validationUrl: oturum gerektiren, login olmadan erişilemeyen ana panel URL'i.
+        // unauthenticatedUrlPatterns: oturum düşünce sistemin yönlendirdiği
+        // login/signin sayfa(lar)ının path/pattern'leri.
+        authValidator: {
+          validationUrl: 'https://your-app.example.com/dashboard', // TODO
+          unauthenticatedUrlPatterns: ['/login', '/signin'] // TODO
+        }
       });
 
       const page = engine.getPage();
