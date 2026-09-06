@@ -10,21 +10,48 @@
 
 ## ⚡ ANLIK DURUM
 
-- **Session:** 2 (devam ediyor)
+- **Session:** 2 (kapanıyor)
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - Madde #1: kod tarafı tamam (6 dosya `legacy/`'ye taşındı), kullanıcı
-    doğrulaması hâlâ bekleniyor.
-  - Madde #5: **kapandı.** Kullanıcı kendi Codespace ortamında `tsconfig.json`
-    ekleyip `npx tsc --noEmit` çalıştırdı — sıfır hata, temiz çıktı. Bilinen
-    "repo derlenmiyor" durumu gerçek kanıtla kapatıldı.
-  - Madde #6: kod tarafı tamam + **derleme doğrulandı** (aynı `tsc --noEmit`
-    çalıştırması). **Runtime doğrulaması hâlâ bekliyor** — derleme,
-    concurrency düzeltmesinin (ikinci anomaly'nin artık kaybolmadığının)
-    gerçekten çalıştığını göstermez; bunun için gerçek bir anomaly/recovery
-    senaryosu tetiklenmesi gerekiyor. Bu yüzden madde henüz kapatılmadı.
-- **Sıradaki öncelik:** Madde #7 (Governor↔RecoveryExecutor command
-  interface).
+  - Madde #1: **KAPANDI.** Bu session'da `legacy/AdaptiveGovernor.ts` ve
+    `legacy/PersistentStateEngine.ts` gerçekten `src/engine/`'e taşındı
+    (Session 1'de sadece "taşındı" diye işaretlenmişti ama `find`/`git show`
+    ile doğrulanınca üretim kodunun hâlâ `legacy/`'de yaşadığı ortaya çıktı —
+    bu, Session 1'in eksik kapanışıydı, şimdi gerçekten düzeltildi). Ayrıca
+    `src/types/index.ts` adında yanlış konumda duran bir dosyanın aslında
+    production entrypoint (`EngineFactory`) olduğu bulundu — `src/index.ts`'e
+    taşındı, `src/types/index.ts` artık gerçekten sadece domain tiplerini
+    (`governor-command.types.ts` re-export) taşıyor. `npx tsc --noEmit`
+    temiz geçti.
+  - Madde #5: kapalı (Session 1/2'de kapatılmıştı, bu session'da dokunulmadı).
+  - Madde #6: kod tarafı tamam + derleme doğrulandı (değişmedi). **Runtime
+    doğrulaması hâlâ bekliyor.**
+  - Madde #7: **kod tarafı tamam + derleme doğrulandı.** `RecoveryCommandPort`
+    arayüzü (`src/types/governor-command.types.ts`) eklendi, `AdaptiveGovernor`
+    artık hem legacy `.on('decision', ...)` dinleyicilerini hem de (varsa)
+    enjekte edilmiş `RecoveryCommandPort`'u aynı `Promise.allSettled` turunda
+    bekliyor — `PersistentStateEngine.ts` güncellenmeden geriye dönük uyumlu
+    kaldı. **Runtime doğrulaması açık** (port'u gerçekten implement eden bir
+    tüketici henüz yok — sadece legacy path aktif olarak çalışıyor).
+  - **Yan bulgu (bu session'da ortaya çıktı, ayrı madde numarası yok):**
+    `SemanticAnomaly` / `AnomalyScope` / `GovernorAction` / `ProxyLease` /
+    `ProxyMetrics` / `PreservedSessionState` tiplerinin merkezi bir kaynağı
+    hiç var olmamış (kullanım noktaları vardı, tanım dosyası yoktu). Bu
+    session'da `src/types/governor-command.types.ts` bu tiplerin gerçek
+    kaynağı olarak yazıldı — önce varsayımla (YANLIŞ çıktı: `AnomalyScope`
+    gerçekte `SESSION/IP/INFRASTRUCTURE`, ben `SESSION/PROXY/GLOBAL`
+    varsaymıştım), sonra `PersistentStateEngine.ts` ve
+    `AdvancedProxyManager.ts`'in tam içeriği görülerek düzeltildi.
+    `npx tsc --noEmit` sıfır hatayla doğruladı.
+  - **Push durumu:** Bu session'ın sonunda `git push` önerildi ama sonucu bu
+    dosyanın yazıldığı an itibarıyla kullanıcı tarafından teyit edilmedi —
+    bir sonraki session açılışında önce `git status`/`git log` ile push'un
+    gerçekten gidip gitmediği doğrulanmalı.
+- **Sıradaki öncelik:** Madde #8 (Recovery transaction modeli,
+  CAPTURE→...→COMMIT) — P0 sırasında #7'den sonraki açık madde. Alternatif
+  olarak #7/#6'nın runtime doğrulaması (gerçek bir anomaly/recovery
+  senaryosu tetiklenerek) de öncelik olarak seçilebilir, kullanıcıya
+  sorulmalı.
 
 ---
 
@@ -32,15 +59,14 @@
 
 | # | Madde | Katman | Durum |
 |---|---|---|---|
-| 1 | Çift implementasyonların kaldırılması (root vs src) | mimari | kod tarafı tamam, kullanıcı doğrulaması bekleniyor |
-| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı (`tsc --noEmit` temiz), runtime doğrulaması bekleniyor |
-| 7 | Governor↔RecoveryExecutor command interface | engine | açık — sıradaki öncelik |
-| 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | açık |
+| 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı, runtime doğrulaması bekleniyor |
+| 7 | Governor↔RecoveryExecutor command interface | engine | kod tarafı tamam, derleme doğrulandı (`tsc --noEmit` temiz), runtime doğrulaması bekleniyor (port'u implement eden gerçek bir tüketici yok) |
+| 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | açık — sıradaki öncelik adayı |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
 | 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
-| 23 | Proxy credential/metrics izolasyonu (getAllMetrics sızıntısı) | network/security | açık — doğrulandı: getAllMetrics() username/password döndürüyor |
-| 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık |
+| 23 | Proxy credential/metrics izolasyonu (getAllMetrics sızıntısı) | network/security | açık — doğrulandı: `getAllMetrics(): ProxyMetrics[]` username/password dahil tüm alanları çıplak döndürüyor (bu session'da tipi netleşti, izolasyonu hâlâ çözülmedi) |
+| 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — bu session'da kontrol edildi, `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
 
@@ -82,14 +108,31 @@
 ## 📌 KRİTİK TEKNİK KARARLAR
 
 - Production kod SADECE `src/` altına yazılacak; kök dizindeki eski dosyalar
-  `legacy/` klasöründe (Madde #1, Session 1'de taşındı) — silinmedi, referans
+  `legacy/` klasöründe (Madde #1, Session 1'de taşındı, Session 2'de
+  gerçekten tamamlandı — bkz. Kapanan Maddeler Geçmişi) — silinmedi, referans
   amaçlı tutuluyor (bkz. Madde #36).
 - Repo kökünde `tsconfig.json` yoktu — Session 2'de eklendi (`target: ES2020`,
-  `module: CommonJS`, `strict: true`, `skipLibCheck: true`, `legacy/` ve test
-  dosyaları `exclude`'da). Bu, 36 maddenin önkoşulu olan bir altyapı ekiydi,
-  ayrı bir madde numarası almadı.
+  `module: Node16`, `moduleResolution: Node16`, `types: ["node"]`,
+  `strict: true`, `skipLibCheck: true`, `legacy/` ve test dosyaları
+  `exclude`'da). `moduleResolution: "node"` artık TS'te `node10`'un takma adı
+  ve kaldırıldı — `Node16` kullanılmalı, `module` da aynı değere ayarlı olmak
+  zorunda.
+- **Domain tiplerinin (SemanticAnomaly/AnomalyScope/GovernorAction/ProxyLease/
+  ProxyMetrics/PreservedSessionState/GovernorDecisionEvent/RecoveryCommandPort)
+  TEK merkezi kaynağı `src/types/governor-command.types.ts`.**
+  `src/types/index.ts` bunu `export * from './governor-command.types'` ile
+  dışa aktarır — `src/types/index.ts`'i asla production entrypoint (`EngineFactory`
+  vb.) için kullanma, o `src/index.ts`'te yaşıyor. Bu iki dosyanın aynı isimle
+  (`index.ts`) farklı klasörlerde bulunması Session 2'de uzun bir karışıklığa
+  yol açtı (bkz. Dersler).
+- `GovernorDecisionEvent` ve `RecoveryCommandPort`, `AdaptiveGovernor.ts`'ten
+  de `export type { ... }` ile re-export ediliyor — `PersistentStateEngine.ts`
+  bu tipi hâlâ `from './AdaptiveGovernor'` şeklinde import ediyor, tek kaynak
+  ama iki erişim yolu.
 - Madde #6'da listener hatası `Promise.allSettled` ile izole edildi — tek bir
-  hatalı decision handling'i tüm kuyruğu durdurmuyor.
+  hatalı decision handling'i tüm kuyruğu durdurmuyor. Madde #7 bu mekanizmayı
+  genişletti: legacy listener'lar VE (varsa) `RecoveryCommandPort` aynı
+  `Promise.allSettled` turunda bekleniyor.
 - Persistent proxy store için backend seçimi (Redis vs SQLite vs PostgreSQL)
   henüz kullanıcıya soruLMADI — #2 tetiklendiğinde CORE.md §3 üzerinden sorulacak.
 - Secret yönetimi için SecretProvider'ın hangi kaynaktan besleneceği
@@ -99,31 +142,55 @@
 
 ## 📜 KAPANAN MADDELER GEÇMİŞİ
 
-- **Madde #1** (Session 1): Root `AdaptiveGovernor.ts`, `PersistentStateEngine.ts`,
-  `IResourceAdapter.ts`, `IStateObserver.ts` → `legacy/` klasörüne taşındı.
-  **Not: kod tarafı tamam, "kapandı" statüsü kullanıcının repo'yu kendi
-  ortamında doğrulamasıyla kesinleşecek.**
-- **Madde #5** (Session 1 kod, Session 2 doğrulama — **KAPANDI**):
-  `PersistentStateEngine.ts` yeni `ProxyLease` API'sine geçirildi
-  (`currentProxyServer` → `currentLease`, sabit `sessionId`, acquire/release
-  sırası, `getProxyMetrics()` ile credential lookup, `close()`'da lease
-  release). Kullanıcı Session 2'de `tsconfig.json` ekleyip `npx tsc --noEmit`
-  çalıştırdı — temiz geçti. Repo artık gerçekten derleniyor, kanıtlandı.
+- **Madde #1** (Session 1 kod, Session 2'de gerçek kapanış): Session 1'de
+  "kod tarafı tamam" diye işaretlenmişti ama Session 2'de `find`/`git show`
+  ile doğrulanınca `AdaptiveGovernor.ts` ve `PersistentStateEngine.ts`'in
+  hâlâ `legacy/`'de yaşadığı, `src/engine/`'in hiç var olmadığı ortaya çıktı.
+  Bu session'da her ikisi de `git mv` ile `src/engine/`'e taşındı; ayrıca
+  yanlış konumdaki `src/types/index.ts` (aslında production entrypoint)
+  `src/index.ts`'e taşındı. `npx tsc --noEmit` temiz geçti — **gerçekten
+  kapandı.**
+- **Madde #5** (Session 1 kod, Session 2 doğrulama — KAPANDI):
+  `PersistentStateEngine.ts` yeni `ProxyLease` API'sine geçirildi.
+  Kullanıcı `tsconfig.json` ekleyip `npx tsc --noEmit` çalıştırdı — temiz
+  geçti.
 - **Madde #6** (Session 1 kod, Session 2 derleme doğrulaması): `AdaptiveGovernor
   .processQueue()` artık her decision'ı `emitDecisionAndWait()` ile bekleyip
-  öyle bir sonrakine geçiyor. Derleme temiz geçti ama **runtime doğrulaması
-  hâlâ açık** — concurrency düzeltmesi ancak gerçek bir anomaly/recovery
-  senaryosuyla gözlemlenebilir, bu yüzden madde kapatılmadı.
+  öyle bir sonrakine geçiyor. Derleme temiz ama **runtime doğrulaması hâlâ
+  açık.**
 
 ---
 
-## ⚠️ DERSLER (Bowlera projesinden taşınan, bu projede de geçerli ilkeler)
+## ⚠️ DERSLER (Bowlera projesinden taşınan + bu session'da eklenen)
 
 - "Kod yazıldı" ile "kullanıcı gerçekten kullanabiliyor" ayrı doğrulama
   noktalarıdır — bir madde sadece kod üretildi diye kapatılmaz.
 - Derleme (`tsc --noEmit`) başarısı da tek başına yeterli değildir — sadece
-  tip hatası olmadığını kanıtlar, çalışma zamanı davranışını (özellikle
-  concurrency/timing bug'larını) kanıtlamaz; ikisi ayrı kapanış koşuludur.
+  tip hatası olmadığını kanıtlar, çalışma zamanı davranışını kanıtlamaz;
+  ikisi ayrı kapanış koşuludur.
 - Checkpoint/onay gelmeden sohbet kesilme riski varsa madde açık kalmaya
   devam eder; bir sonraki session'da SESSION_INDEX üzerinden kaldığı yerden
   devam edilir, "sonra eklenecek" notuyla kapanış yapılmaz.
+- **(Yeni) Bir maddenin SESSION_INDEX'te "kapandı" yazması, dosyaların
+  gerçekten iddia edilen konumda olduğunu KANITLAMAZ.** Session 2'de Madde
+  #1'in "kod tarafı tamam" iddiası, gerçek `find`/`git show` çıktısıyla
+  çürütüldü — production kod hâlâ `legacy/`'deydi. Bir sonraki session bir
+  maddeyi "zaten kapalı" varsayıp üzerine inşa etmeden önce, en azından
+  dosya konumunu tek bir `find`/`ls` ile doğrulamalı.
+- **(Yeni) Aynı dosya adının (`index.ts`) farklı klasörlerde farklı anlamlara
+  gelmesi ciddi karışıklığa yol açar.** `src/types/index.ts` ile
+  `src/index.ts` defalarca birbirine karıştırıldı çünkü ikisi de sadece
+  "index.ts" diye anılıyordu. Belirsiz bir dosya isteğinde her zaman TAM
+  yol istenmeli, sadece dosya adı değil.
+- **(Yeni) Tip tanımı bulunamadığında kullanıcının "sen yaz" demesi, o
+  tipin varsayımla doğru yazılacağı anlamına gelmez.** Bu session'da
+  `governor-command.types.ts` ilk yazıldığında `AnomalyScope` değerleri
+  yanlış tahmin edildi (`SESSION/PROXY/GLOBAL` yerine gerçeği
+  `SESSION/IP/INFRASTRUCTURE`). Varsayımla yazılan bir tip dosyası her
+  zaman "geçici" sayılmalı — gerçek tüketici dosyaların (bu örnekte
+  `PersistentStateEngine.ts`, `AdvancedProxyManager.ts`) tam içeriği
+  görülene kadar kapanış iddia edilmemeli.
+- **(Yeni) Mobil terminalde `cat` ile uzun dosya okumak güvenilir değil**
+  (scrollback dosyanın başını kaybediyor, aynı ekran görüntüsü tekrar
+  paylaşılabiliyor). Uzun dosyalar için editörden aç → tümünü seç → kopyala
+  → mesaj olarak yapıştır yöntemi çok daha güvenilir sonuç verdi.
