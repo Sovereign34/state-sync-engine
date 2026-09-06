@@ -10,56 +10,29 @@
 
 ## ⚡ ANLIK DURUM
 
-- **Session:** 2 (kapanıyor)
+- **Session:** 3 (devam ediyor)
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - Madde #1: **KAPANDI.** Bu session'da `legacy/AdaptiveGovernor.ts` ve
-    `legacy/PersistentStateEngine.ts` gerçekten `src/engine/`'e taşındı
-    (Session 1'de sadece "taşındı" diye işaretlenmişti ama `find`/`git show`
-    ile doğrulanınca üretim kodunun hâlâ `legacy/`'de yaşadığı ortaya çıktı —
-    bu, Session 1'in eksik kapanışıydı, şimdi gerçekten düzeltildi). Ayrıca
-    `src/types/index.ts` adında yanlış konumda duran bir dosyanın aslında
-    production entrypoint (`EngineFactory`) olduğu bulundu — `src/index.ts`'e
-    taşındı, `src/types/index.ts` artık gerçekten sadece domain tiplerini
-    (`governor-command.types.ts` re-export) taşıyor. `npx tsc --noEmit`
-    temiz geçti.
-  - Madde #5: kapalı (Session 1/2'de kapatılmıştı, bu session'da dokunulmadı).
-  - Madde #6: kod tarafı tamam + derleme doğrulandı (değişmedi). **Runtime
-    doğrulaması hâlâ bekliyor.**
-  - Madde #7: **kod tarafı tamam + derleme doğrulandı.** `RecoveryCommandPort`
-    arayüzü (`src/types/governor-command.types.ts`) eklendi, `AdaptiveGovernor`
-    artık hem legacy `.on('decision', ...)` dinleyicilerini hem de (varsa)
-    enjekte edilmiş `RecoveryCommandPort`'u aynı `Promise.allSettled` turunda
-    bekliyor — `PersistentStateEngine.ts` güncellenmeden geriye dönük uyumlu
-    kaldı. **Runtime doğrulaması açık** (port'u gerçekten implement eden bir
-    tüketici henüz yok — sadece legacy path aktif olarak çalışıyor).
-  - **Yan bulgu (bu session'da ortaya çıktı, ayrı madde numarası yok):**
-    `SemanticAnomaly` / `AnomalyScope` / `GovernorAction` / `ProxyLease` /
-    `ProxyMetrics` / `PreservedSessionState` tiplerinin merkezi bir kaynağı
-    hiç var olmamış (kullanım noktaları vardı, tanım dosyası yoktu). Bu
-    session'da `src/types/governor-command.types.ts` bu tiplerin gerçek
-    kaynağı olarak yazıldı — önce varsayımla (YANLIŞ çıktı: `AnomalyScope`
-    gerçekte `SESSION/IP/INFRASTRUCTURE`, ben `SESSION/PROXY/GLOBAL`
-    varsaymıştım), sonra `PersistentStateEngine.ts` ve
-    `AdvancedProxyManager.ts`'in tam içeriği görülerek düzeltildi.
-    `npx tsc --noEmit` sıfır hatayla doğruladı.
-  - **Push durumu:** Kullanıcı tarafından teyit edildi — `git push` başarılı.
-  - Madde #8: **kod tarafı tamam.** `createSessionWithFreshState()`
-    "release-then-acquire"den "acquire-then-commit" (make-before-break)
-    transaction modeline geçirildi — yeni proxy/context/page tamamen hazır
-    olup commit edilene kadar eski context/lease'e dokunulmuyor; herhangi
-    bir adım patlarsa yeni kaynaklar rollback edilir, eski oturum bozulmadan
-    kalır. `captureCurrentState`/`applyPreservedState`, `this.context`/
-    `this.page` okuyan yan etkili metodlardan parametre alan saf
-    fonksiyonlara (`captureState`/`applyState`) dönüştürüldü. **Derleme
-    doğrulaması henüz yapılmadı** (kullanıcı `tsc --noEmit` çalıştırmadı).
-    **Davranış değişikliği:** proxy release sırası tersine döndü — artık
-    `ROTATE_SESSION_ONLY` aynı proxy'yi geri seçemiyor (öncesinde
-    mümkündü), gerçek rotasyon garanti ediliyor.
-- **Sıradaki öncelik:** Kullanıcının `tsc --noEmit` çalıştırıp Madde #8'in
-  derlemesini doğrulaması. Ardından #7/#6/#8'in üçünün de runtime
-  doğrulaması (gerçek bir anomaly/recovery senaryosu tetiklenerek) veya
-  Madde #9 (state restore validation) — kullanıcıya sorulmalı.
+  - Madde #7: **kod tarafı tamam + derleme doğrulandı.** `git pull`
+    ile `AdaptiveGovernor.ts` (+++---, 34 satır) ve `PersistentStateEngine.ts`
+    (++--, 24 satır) değişiklikleri repoya gerçekten yansımış (fast-forward
+    ile teyit edildi, iddia değil). Değişiklik:
+    - `PersistentStateEngine`, `RecoveryCommandPort`'u gerçekten implement
+      ediyor (`handleDecision()` metodu, mevcut `handleGovernorDecision`
+      mantığını kullanarak).
+    - Constructor'da `governor.setCommandPort(this)` ile kendini enjekte
+      ediyor.
+    - `AdaptiveGovernor`'a constructor-zamanı zorunluluğu olmayan bir
+      `setCommandPort()` setter eklendi.
+    - Eski `.on('decision', ...)` kaydı **kaldırıldı**.
+    - `npx tsc --noEmit` **çalıştırıldı ve ekran görüntüsüyle teyit edildi**
+      — komut ile sıradaki `$` istemi arasında hata satırı yok, Codespaces
+      durum çubuğu 0 hata gösteriyor. **Runtime doğrulaması hâlâ açık.**
+  - Madde #6, #8, #9, #13, #22, #23, #33: Session 2'den değişmedi (aşağıdaki
+    tabloya bakınız).
+- **Sıradaki öncelik:** #6/#7/#8'in üçünün birden runtime doğrulaması
+  (gerçek bir anomaly/recovery senaryosu tetiklenerek) veya Madde #9
+  (state restore validation) — kullanıcıya sorulmalı.
 
 ---
 
@@ -68,13 +41,13 @@
 | # | Madde | Katman | Durum |
 |---|---|---|---|
 | 6 | Recovery concurrency — isRecovering kilidi yerine queue | engine | kod tarafı tamam, derleme doğrulandı, runtime doğrulaması bekleniyor |
-| 7 | Governor↔RecoveryExecutor command interface | engine | kod tarafı tamam, derleme doğrulandı (`tsc --noEmit` temiz), runtime doğrulaması bekleniyor (port'u implement eden gerçek bir tüketici yok) |
+| 7 | Governor↔RecoveryExecutor command interface | engine | kod tarafı tamam + derleme doğrulandı (port artık `PersistentStateEngine.handleDecision()` ile implement ediliyor, `AdaptiveGovernor.setCommandPort()` eklendi, legacy `.on('decision',...)` kaldırıldı, `tsc --noEmit` temiz) — runtime doğrulaması bekleniyor |
 | 8 | Recovery transaction modeli (CAPTURE→...→COMMIT) | engine | kod tarafı tamam (make-before-break transaction), derleme ve runtime doğrulaması bekleniyor |
 | 9 | State restore validation (cookie≠authenticated) | state | açık |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
 | 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
-| 23 | Proxy credential/metrics izolasyonu (getAllMetrics sızıntısı) | network/security | açık — doğrulandı: `getAllMetrics(): ProxyMetrics[]` username/password dahil tüm alanları çıplak döndürüyor (bu session'da tipi netleşti, izolasyonu hâlâ çözülmedi) |
-| 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — bu session'da kontrol edildi, `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
+| 23 | Proxy credential/metrics izolasyonu (getAllMetrics sızıntısı) | network/security | açık — doğrulandı: `getAllMetrics(): ProxyMetrics[]` username/password dahil tüm alanları çıplak döndürüyor |
+| 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
 
@@ -116,89 +89,57 @@
 ## 📌 KRİTİK TEKNİK KARARLAR
 
 - Production kod SADECE `src/` altına yazılacak; kök dizindeki eski dosyalar
-  `legacy/` klasöründe (Madde #1, Session 1'de taşındı, Session 2'de
-  gerçekten tamamlandı — bkz. Kapanan Maddeler Geçmişi) — silinmedi, referans
-  amaçlı tutuluyor (bkz. Madde #36).
-- Repo kökünde `tsconfig.json` yoktu — Session 2'de eklendi (`target: ES2020`,
-  `module: Node16`, `moduleResolution: Node16`, `types: ["node"]`,
-  `strict: true`, `skipLibCheck: true`, `legacy/` ve test dosyaları
-  `exclude`'da). `moduleResolution: "node"` artık TS'te `node10`'un takma adı
-  ve kaldırıldı — `Node16` kullanılmalı, `module` da aynı değere ayarlı olmak
-  zorunda.
+  `legacy/` klasöründe (Madde #1) — silinmedi, referans amaçlı tutuluyor.
+- Repo kökünde `tsconfig.json` (`target: ES2020`, `module: Node16`,
+  `moduleResolution: Node16`, `types: ["node"]`, `strict: true`,
+  `skipLibCheck: true`, `legacy/` ve test dosyaları `exclude`'da).
 - **Domain tiplerinin (SemanticAnomaly/AnomalyScope/GovernorAction/ProxyLease/
   ProxyMetrics/PreservedSessionState/GovernorDecisionEvent/RecoveryCommandPort)
   TEK merkezi kaynağı `src/types/governor-command.types.ts`.**
-  `src/types/index.ts` bunu `export * from './governor-command.types'` ile
-  dışa aktarır — `src/types/index.ts`'i asla production entrypoint (`EngineFactory`
-  vb.) için kullanma, o `src/index.ts`'te yaşıyor. Bu iki dosyanın aynı isimle
-  (`index.ts`) farklı klasörlerde bulunması Session 2'de uzun bir karışıklığa
-  yol açtı (bkz. Dersler).
+  `src/types/index.ts` bunu re-export eder; production entrypoint `src/index.ts`'tir.
 - `GovernorDecisionEvent` ve `RecoveryCommandPort`, `AdaptiveGovernor.ts`'ten
-  de `export type { ... }` ile re-export ediliyor — `PersistentStateEngine.ts`
-  bu tipi hâlâ `from './AdaptiveGovernor'` şeklinde import ediyor, tek kaynak
-  ama iki erişim yolu.
-- Madde #6'da listener hatası `Promise.allSettled` ile izole edildi — tek bir
-  hatalı decision handling'i tüm kuyruğu durdurmuyor. Madde #7 bu mekanizmayı
-  genişletti: legacy listener'lar VE (varsa) `RecoveryCommandPort` aynı
-  `Promise.allSettled` turunda bekleniyor.
-- Persistent proxy store için backend seçimi (Redis vs SQLite vs PostgreSQL)
-  henüz kullanıcıya soruLMADI — #2 tetiklendiğinde CORE.md §3 üzerinden sorulacak.
-- Secret yönetimi için SecretProvider'ın hangi kaynaktan besleneceği
-  (env vs vault) henüz belirlenmedi — #13 tetiklendiğinde netleştirilecek.
+  de re-export ediliyor.
+- Madde #6'da listener hatası `Promise.allSettled` ile izole edilmişti;
+  Madde #7 ile birlikte legacy `.on('decision', ...)` yolu **kaldırıldı**,
+  tek yol `RecoveryCommandPort` (`setCommandPort` ile enjekte edilen
+  `PersistentStateEngine`) oldu. `Promise.allSettled`'ın artık tek bir port
+  beklerken hâlâ anlamlı olup olmadığı — runtime doğrulaması sırasında
+  gözden geçirilmeli (dosya içeriği henüz bu session'a yüklenmedi, sadece
+  git diff istatistiği ve tsc sonucu görüldü).
+- Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
+- Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
 
 ---
 
 ## 📜 KAPANAN MADDELER GEÇMİŞİ
 
-- **Madde #1** (Session 1 kod, Session 2'de gerçek kapanış): Session 1'de
-  "kod tarafı tamam" diye işaretlenmişti ama Session 2'de `find`/`git show`
-  ile doğrulanınca `AdaptiveGovernor.ts` ve `PersistentStateEngine.ts`'in
-  hâlâ `legacy/`'de yaşadığı, `src/engine/`'in hiç var olmadığı ortaya çıktı.
-  Bu session'da her ikisi de `git mv` ile `src/engine/`'e taşındı; ayrıca
-  yanlış konumdaki `src/types/index.ts` (aslında production entrypoint)
-  `src/index.ts`'e taşındı. `npx tsc --noEmit` temiz geçti — **gerçekten
-  kapandı.**
-- **Madde #5** (Session 1 kod, Session 2 doğrulama — KAPANDI):
-  `PersistentStateEngine.ts` yeni `ProxyLease` API'sine geçirildi.
-  Kullanıcı `tsconfig.json` ekleyip `npx tsc --noEmit` çalıştırdı — temiz
-  geçti.
-- **Madde #6** (Session 1 kod, Session 2 derleme doğrulaması): `AdaptiveGovernor
-  .processQueue()` artık her decision'ı `emitDecisionAndWait()` ile bekleyip
-  öyle bir sonrakine geçiyor. Derleme temiz ama **runtime doğrulaması hâlâ
-  açık.**
+- **Madde #1** (Session 1 kod, Session 2'de gerçek kapanış).
+- **Madde #5** (Session 1 kod, Session 2 doğrulama — KAPANDI).
+- **Madde #6** (Session 1 kod, Session 2 derleme doğrulaması) — runtime
+  doğrulaması hâlâ açık.
+- **Madde #7 — derleme doğrulaması** (Session 3): `PersistentStateEngine`
+  `RecoveryCommandPort`'u implement etti, `AdaptiveGovernor.setCommandPort()`
+  eklendi, legacy `.on('decision',...)` kaldırıldı. `git pull` diff
+  istatistiği ve `tsc --noEmit` ekran görüntüsüyle teyit edildi (temiz,
+  0 hata). Madde tam kapanmadı — runtime doğrulaması hâlâ P0 tablosunda açık.
 
 ---
 
-## ⚠️ DERSLER (Bowlera projesinden taşınan + bu session'da eklenen)
+## ⚠️ DERSLER (Bowlera projesinden taşınan + eklenen)
 
 - "Kod yazıldı" ile "kullanıcı gerçekten kullanabiliyor" ayrı doğrulama
-  noktalarıdır — bir madde sadece kod üretildi diye kapatılmaz.
-- Derleme (`tsc --noEmit`) başarısı da tek başına yeterli değildir — sadece
-  tip hatası olmadığını kanıtlar, çalışma zamanı davranışını kanıtlamaz;
-  ikisi ayrı kapanış koşuludur.
-- Checkpoint/onay gelmeden sohbet kesilme riski varsa madde açık kalmaya
-  devam eder; bir sonraki session'da SESSION_INDEX üzerinden kaldığı yerden
-  devam edilir, "sonra eklenecek" notuyla kapanış yapılmaz.
-- **(Yeni) Bir maddenin SESSION_INDEX'te "kapandı" yazması, dosyaların
-  gerçekten iddia edilen konumda olduğunu KANITLAMAZ.** Session 2'de Madde
-  #1'in "kod tarafı tamam" iddiası, gerçek `find`/`git show` çıktısıyla
-  çürütüldü — production kod hâlâ `legacy/`'deydi. Bir sonraki session bir
-  maddeyi "zaten kapalı" varsayıp üzerine inşa etmeden önce, en azından
-  dosya konumunu tek bir `find`/`ls` ile doğrulamalı.
-- **(Yeni) Aynı dosya adının (`index.ts`) farklı klasörlerde farklı anlamlara
-  gelmesi ciddi karışıklığa yol açar.** `src/types/index.ts` ile
-  `src/index.ts` defalarca birbirine karıştırıldı çünkü ikisi de sadece
-  "index.ts" diye anılıyordu. Belirsiz bir dosya isteğinde her zaman TAM
-  yol istenmeli, sadece dosya adı değil.
-- **(Yeni) Tip tanımı bulunamadığında kullanıcının "sen yaz" demesi, o
-  tipin varsayımla doğru yazılacağı anlamına gelmez.** Bu session'da
-  `governor-command.types.ts` ilk yazıldığında `AnomalyScope` değerleri
-  yanlış tahmin edildi (`SESSION/PROXY/GLOBAL` yerine gerçeği
-  `SESSION/IP/INFRASTRUCTURE`). Varsayımla yazılan bir tip dosyası her
-  zaman "geçici" sayılmalı — gerçek tüketici dosyaların (bu örnekte
-  `PersistentStateEngine.ts`, `AdvancedProxyManager.ts`) tam içeriği
-  görülene kadar kapanış iddia edilmemeli.
-- **(Yeni) Mobil terminalde `cat` ile uzun dosya okumak güvenilir değil**
-  (scrollback dosyanın başını kaybediyor, aynı ekran görüntüsü tekrar
-  paylaşılabiliyor). Uzun dosyalar için editörden aç → tümünü seç → kopyala
-  → mesaj olarak yapıştır yöntemi çok daha güvenilir sonuç verdi.
+  noktalarıdır.
+- Derleme (`tsc --noEmit`) başarısı da tek başına yeterli değildir.
+- Checkpoint/onay gelmeden madde kapanış yapılmaz.
+- Bir maddenin "kapandı" yazması, dosyaların gerçekten iddia edilen
+  konumda/durumda olduğunu KANITLAMAZ — `find`/`git show`/gerçek komut
+  çıktısı ile doğrulanmalı.
+- Aynı dosya adının farklı klasörlerde farklı anlama gelmesi karışıklığa
+  yol açar — tam yol istenmeli.
+- Tip tanımı varsayımla yazılan bir dosya her zaman "geçici" sayılmalı.
+- Mobil terminalde `cat` ile uzun dosya okumak güvenilir değil.
+- **(Yeni)** Bir session'ın kapanışında "şunu yapıyorum / şu komutu
+  çalıştırıyorum" şeklinde bildirilen bir eylem, komutun **gerçek çıktısı**
+  paylaşılmadan bir sonraki session'da "doğrulandı" sayılmamalı — niyet
+  beyanı ile gerçekleşmiş sonuç arasındaki fark, tam da bu projenin var
+  olma sebebi olan ayrımdır.
