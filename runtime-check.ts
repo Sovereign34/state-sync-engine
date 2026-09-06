@@ -34,6 +34,19 @@
 //       düşüyor (AdaptiveGovernor.evaluatePolicy) — bu senaryoda markFailed
 //       HİÇ çağrılmamalı (tip-guard'ın gerçekten HTTP_429'a özel olduğunun
 //       kanıtı; düzeltilen Hata 1'in regresyon testi).
+//   (e) (BU TUR) Yeni TEST 4: Madde #22 recordSuccess() köprüsü.
+//       `mockProxyManager`'a `recordSuccess()` eklendi (önceden hiç yoktu).
+//       `PlaywrightPageObserver` (gerçek response/timing event zincirini
+//       üreten sınıf) bu betikte KASITLI OLARAK mock'lanmadı — bunu
+//       mock'lamak, gerçek Playwright response/timing nesnelerini taklit
+//       etmeyi gerektirir ve bu betiğin zaten beyan edilmiş kapsam sınırının
+//       (network/proxy katmanının kendisi DIŞINDA) dışına çıkar. Bunun
+//       yerine `PersistentStateEngine`'in private `handleObserverState()`
+//       metodu `(engine as any)` ile DOĞRUDAN çağrılıyor — test edilen, tam
+//       olarak Madde #22'nin konusu olan guard + recordSuccess çağrı
+//       mantığı; `PlaywrightPageObserver`'ın gerçek bir Page'den bu şekle
+//       uygun payload üretip üretmediği AYRI bir doğrulama konusu (Madde
+//       #33 kapsamı) — bu betik onu KAPSAMIYOR.
 //
 // Çalıştırma (repo kökünden):
 //   npx ts-node --transpile-only runtime-check.ts
@@ -53,6 +66,7 @@ const acquiredLeaseIds: string[] = [];
 const releasedLeaseIds: string[] = [];
 const leaseIdToProxyId = new Map<string, string>();
 const markFailedCalls: Array<{ proxyId: string; reason: string }> = [];
+const recordSuccessCalls: Array<{ proxyId: string; latencyMs: number }> = [];
 
 function log(msg: string): void {
   console.log(msg);
@@ -141,6 +155,10 @@ const mockProxyManager = {
     if (reason === 'HTTP_429') state.http429Count++;
     if (reason === 'HTTP_403') state.http403Count++;
     log(`  [ProxyManager] markFailed(${proxyId}, ${reason})`);
+  },
+  recordSuccess(proxyId: string, latencyMs: number): void {
+    recordSuccessCalls.push({ proxyId, latencyMs });
+    log(`  [ProxyManager] recordSuccess(${proxyId}, ${latencyMs}ms)`);
   },
 } as unknown as AdvancedProxyManager;
 
@@ -304,10 +322,61 @@ async function main(): Promise<void> {
     fail(`beklenen: ${activeProxyIdBeforeTest3}'in http429Count'u +1 artmalı; gerçekleşen: ${http429CountBefore} -> ${http429CountAfter}, bu turdaki markFailed çağrıları: ${JSON.stringify(relevantMarkFailedCalls)}`);
   }
 
+  // ============ TEST 4 — Madde #22 (recordSuccess() köprüsü) ============
+  console.log('\n=== TEST 4: handleObserverState() -> recordSuccess() köprüsü ===');
+  // Not (bkz. dosya başlığı (e)): PlaywrightPageObserver bu betikte
+  // mock'lanmadı — bunu kurmak gerçek response/timing event zincirini
+  // taklit etmeyi gerektirir, bu betiğin kapsamı dışındadır. Bunun yerine
+  // handleObserverState() private metodu, observer'ın üreteceği payload
+  // şekliyle DOĞRUDAN çağrılıyor. `--transpile-only` zaten tam tip
+  // kontrolünü devre dışı bıraktığı için `(engine as any)` ile private
+  // erişim, mock nesnelerdeki `as unknown as X` cast'leriyle aynı ruhta.
+
+  const activeProxyIdBeforeTest4 = getActiveProxyId();
+
+  // 4a — geçerli latencyMs: recordSuccess ÇAĞRILMALI, doğru proxyId/latencyMs ile.
+  const recordSuccessCallsBeforeValid = recordSuccessCalls.length;
+  (engine as any).handleObserverState({
+    type: 'state',
+    timestamp: Date.now(),
+    data: { latencyMs: 123 },
+  });
+  const validCallMade = recordSuccessCalls
+    .slice(recordSuccessCallsBeforeValid)
+    .some((c) => c.proxyId === activeProxyIdBeforeTest4 && c.latencyMs === 123);
+
+  if (validCallMade) {
+    pass(`geçerli latencyMs (123) ile recordSuccess(${activeProxyIdBeforeTest4}, 123) çağrıldı`);
+  } else {
+    fail(`geçerli latencyMs ile recordSuccess çağrılmadı/yanlış argümanla çağrıldı: ${JSON.stringify(recordSuccessCalls.slice(recordSuccessCallsBeforeValid))}`);
+  }
+
+  // 4b — regresyon: negatif latencyMs -> recordSuccess ÇAĞRILMAMALI
+  // (sahte veri yasağı, Madde 22 disiplini — handleObserverState'teki
+  // `typeof latencyMs !== 'number' || latencyMs < 0` guard'ının kanıtı).
+  const recordSuccessCallsBeforeInvalid = recordSuccessCalls.length;
+  (engine as any).handleObserverState({
+    type: 'state',
+    timestamp: Date.now(),
+    data: { latencyMs: -5 },
+  });
+  if (recordSuccessCalls.length === recordSuccessCallsBeforeInvalid) {
+    pass('negatif latencyMs (-5) ile recordSuccess ÇAĞRILMADI — guard doğru çalışıyor');
+  } else {
+    fail(`negatif latencyMs ile recordSuccess YANLIŞLIKLA çağrıldı: ${JSON.stringify(recordSuccessCalls.slice(recordSuccessCallsBeforeInvalid))}`);
+  }
+
+  // Kapsam sınırı (kayıt için, dosya başlığıyla tutarlı): `!this.currentLease`
+  // dalı (observer henüz eski page'e bağlıyken commit arası bir an) bu
+  // testte KAPSANMADI — mevcut script akışında engine'in lease'siz kaldığı
+  // bir an yaratmak, diğer testlerin state'ini bozmadan mümkün değil. Bu,
+  // "handleObserverState no-op çalışıyor" iddiasının bir parçası DEĞİL —
+  // sadece kod okumasıyla (satır 427) biliniyor, runtime'da doğrulanmadı.
+
   // ============ SONUÇ ============
   console.log('\n=== SONUÇ ===');
   if (failures === 0) {
-    console.log('✅ Tüm testler geçti — Madde #6/#7/#8 ve #22 (THROTTLE+ROTATE_SESSION_ONLY→markFailed köprüsü, tip-guard dahil) bu senaryolar altında runtime doğrulandı.');
+    console.log('✅ Tüm testler geçti — Madde #6/#7/#8, #22 (THROTTLE+ROTATE_SESSION_ONLY→markFailed köprüsü, tip-guard dahil) VE #22 recordSuccess() köprüsü (guard dahil) bu senaryolar altında runtime doğrulandı.');
   } else {
     console.log(`❌ ${failures} test başarısız — ilgili maddeyi P0'da açık tutun, koda bakılmalı.`);
     process.exitCode = 1;
