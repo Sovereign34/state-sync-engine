@@ -13,78 +13,19 @@
 - **Session:** 3 (devam ediyor)
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
-  - **Madde #6, #7, #8: KAPANDI.** `runtime-check.ts` (mock `Browser` +
-    mock `AdvancedProxyManager` ile Governor↔Engine mantığını izole eden
-    doğrulama betiği) `npx tsx runtime-check.ts` ile çalıştırıldı, ekran
-    görüntüsüyle teyit edildi:
-    - Test 1 (iki farklı anomaly art arda enqueue): `acquireProxy()` tam 2
-      kez çağrıldı — ikinci decision kaybolmadı (#6), legacy
-      `.on('decision',...)` hâlâ genel EventEmitter olarak tetikleniyor
-      ama `PersistentStateEngine` artık ondan değil `RecoveryCommandPort`
-      üzerinden işliyor (#7).
-    - Test 2 (kasıtlı `newContext()` hatası): eski context DEĞİŞMEDİ
-      (rollback çalıştı), başarısız denemenin lease'i release edildi —
-      sızıntı yok (#8).
-    - Sonuç satırı: "✅ Tüm testler geçti" (`failures === 0` olmadan bu
-      satır basılmaz).
-    - **Kapsam sınırı:** bu doğrulama gerçek Playwright/proxy altyapısını
-      test ETMEDİ — Governor/Engine arası sıralama ve komut-yönlendirme
-      mantığını mock'larla izole doğruladı. Gerçek network/browser
-      entegrasyonunun sağlıklı çalıştığı ayrı bir doğrulama konusu.
-  - **Madde #9 — alt-bug kısmı KAPANDI (mock), gerçek entegrasyon ERTELENDİ:**
-    - Madde #9 üzerinde test tasarımı yapılırken ayrı bir re-entrancy
-      bug'ı ortaya çıktı: `PersistentStateEngine.handleGovernorDecision`'ın
-      catch bloğundaki senkron `this.governor.enqueueAnomaly(...)` çağrısı,
-      `isRecovering` guard'ını sessizce yutuyordu — senkron zincir
-      (`enqueueAnomaly → processQueue → emitDecisionAndWait →
-      commandPort.handleDecision → handleGovernorDecision`) hiçbir
-      await'e uğramadan aynı çağrı yığınında ilerliyordu. Ayrı bir madde
-      açılmadı, #9'un kapsamına dahil edildi.
-    - **[KARAR BİLDİRİMİ] ile onaylanan fix (Confidence: HIGH):** senkron
-      `enqueueAnomaly` çağrısı `queueMicrotask(() => ...)` ile bir sonraki
-      tick'e ertelendi (`setTimeout(...,0)` değil — mikrotask sırası event
-      loop'a çıkmadan çalıştığı için Node ortamında daha öngörülebilir).
-    - Fix, `runtime-check-madde9.ts` (Senaryo A: `validate=false` —
-      rollback + guard'ın gerçekten aşıldığını + re-entrancy olmadığını
-      doğrular; Senaryo B: `validate=true` — normal COMMIT akışının
-      bozulmadığını doğrular) ile test edildi. Betik kullanıcının gerçek
-      ortamında (gerçek `AdvancedProxyManager`/playwright ile) çalıştırıldı,
-      debug satırlı referans çıktı paylaşıldı:
-      ```
-      [DEBUG] handleGovernorDecision çağrıldı — action=ROTATE_SESSION_ONLY, isRecovering=false
-      [DEBUG] handleGovernorDecision çağrıldı — action=FULL_RECOVERY, isRecovering=false
-      [DEBUG] handleGovernorDecision çağrıldı — action=ROTATE_SESSION_ONLY, isRecovering=false
-      ```
-      → **Sonuç: re-entrancy fix çalışıyor, guard sorunu YOK.**
-    - **İkinci kritik hata ihtimali elendi:** `grep -n "kritik hata"
-      /tmp/out.log` tüm log dosyasında tek bir eşleşme döndürdü (12. satır
-      — Senaryo A'nın kasıtlı enjekte ettiği `AuthRestoreFailedError`,
-      testin beklenen parçası). Gizli/ikinci bir hata YOK. Log'un geri
-      kalanı (rollback, lease release, Senaryo B COMMIT, queue boş) tümü
-      ✓/✅ ile bitiyor — **"Tüm testler geçti"** onaylandı.
-    - **Kapsam ve karar (Session 3, kullanıcı onaylı):** guard/re-entrancy
-      alt-bug'ı mock seviyesinde tam doğrulandı ve bu alt-kapsam KAPANDI
-      (bkz. Kapanan Maddeler Geçmişi). Ancak bu doğrulama gerçek
-      Playwright/proxy/`DefaultAuthValidator` ile değil, mock
-      `AuthValidationPort`/`Browser`/`AdvancedProxyManager` ile yapıldı —
-      Madde #9'un asıl konusu olan **gerçek ortam entegrasyon testi**
-      (gerçek context'te cookie restore edilip gerçek auth doğrulamasının
-      başarısız olduğu senaryo) henüz yapılmadı. Kullanıcı kararıyla bu
-      **projenin sonuna ertelendi** — #9 bu nedenle P0 tablosunda AÇIK
-      kalmaya devam ediyor, aktif çalışılmıyor.
-  - **Madde #23: KAPANDI (Session 3, tsc + runtime doğrulaması).** Ayrıntı
-    için Kapanan Maddeler Geçmişi. Bu süreçte bir regresyon (`getProxyMetrics()`
-    yanlışlıkla credential'sız tipe çevrilmiş, gerçek proxy authentication'ı
-    kırmıştı) ortaya çıktı ve aynı turda düzeltildi — ders: Madde #23'ün
-    kapsamını genişletirken (`getAllMetrics()`'ten `getProxyMetrics()`'e)
-    gerçek tüketici kodu görülmeden onay istenmemeliydi.
-  - **Madde #33 — alt-adım (legacy→src/adapters taşıma + PlaywrightPageObserver
-    429/403 wiring) KAPANDI (Session 3, git mv + tsc + runtime doğrulaması):**
-    ayrıntı için Kapanan Maddeler Geçmişi. Madde'nin kendisi kapanmadı —
-    crash/requestfailed genişletmesi bilinçli olarak ayrı bir tura bırakıldı.
-  - **Süreç dışı, numarasız `authValidator` wiring bug'ı — TAM KAPANDI
-    (Session 3, derleme + runtime doğrulaması).** Ayrıntı için Kapanan
-    Maddeler Geçmişi.
+  - **Madde #6, #7, #8: KAPANDI.** Tam ayrıntı `session_arşiv.md`'de
+    (Taşıma 3) — özet: `runtime-check.ts` ile mock doğrulama, 2/2 test PASS,
+    gerçek Playwright/proxy entegrasyonu KAPSAM DIŞI kaldı.
+  - **Madde #9 — alt-bug kısmı KAPANDI (mock), gerçek entegrasyon ERTELENDİ.**
+    Tam ayrıntı `session_arşiv.md`'de (Taşıma 3) — özet: re-entrancy guard
+    fix'i (`queueMicrotask`) mock ortamda tam doğrulandı, gerçek ortam
+    entegrasyon testi kullanıcı kararıyla **projenin sonuna ertelendi**, #9
+    P0 tablosunda AÇIK kalmaya devam ediyor.
+  - **Madde #23: KAPANDI.** Tam ayrıntı `session_arşiv.md`'de (Taşıma 3).
+  - **Madde #33 — alt-adım KAPANDI.** Tam ayrıntı `session_arşiv.md`'de
+    (Taşıma 3) — madde'nin kendisi kapanmadı.
+  - **Süreç dışı `authValidator` wiring bug'ı — TAM KAPANDI.** Tam ayrıntı
+    `session_arşiv.md`'de (Taşıma 2/3).
   - **Madde #22 — alt-kapsam (THROTTLE + ROTATE_SESSION_ONLY→`markFailed`
     köprüsü, tip-guard dahil): KAPANDI (Session 3, runtime + derleme
     doğrulaması).** Ayrıntı için Kapanan Maddeler Geçmişi. `runtime-check`
@@ -120,6 +61,27 @@
          değiştiği gözlemlenir.
     - Bu madde KAPANMADI — sadece "kod var mı" sorusu netleşti, "runtime'da
       çalışıyor mu" sorusu hâlâ açık.
+    - **(Yeni) [KARAR BİLDİRİMİ] onaylandı (Confidence: HIGH):** mevcut
+      `runtime-check.ts`'e `recordSuccess` için 1 mock senaryo eklenecek
+      (`response.ok()=true`, `request().timing().responseEnd` geçerli sayı
+      → `recordSuccess` çağrıldığını doğrulayan tek assertion); ayrı dosya
+      açılmayacak, mevcut script genişletilecek. **Uygulama bekliyor** —
+      mevcut `runtime-check.ts`'in tam içeriği henüz bu session'a
+      yüklenmedi, Kural #1/#2 gereği dosya istendi. Kod üretilmeden önce
+      dosya gelmeli.
+    - **(Yeni) Kullanıcı önerisi reddedildi (kayıt için):** "recordSuccess
+      bu kapsam dışı, mevcut runtime-check.ts yeterli" önerisi, bu turun
+      kendi bulgusuyla (kod var ama runtime'da hiç test edilmemiş)
+      çeliştiği için kabul edilmedi; yukarıdaki mock-genişletme kararı
+      onaylandı.
+  - **(Yeni) `PersistentStateEngine.ts` debug-temiz sürüm: kullanıcı
+    tarafından repo'ya uygulandığı TEYİT EDİLDİ** (debug `console.log`
+    temizliği onaylanmış, kod son haline getirilmiş). Not: bu teyit sözlü
+    beyan seviyesinde — dosyanın kendisi bu session'a yüklenmedi, ayrıca
+    `grep`/diff ile doğrulanmadı. ⚠️ DERSLER'deki "niyet beyanı ile
+    gerçekleşmiş sonuç" ayrımı gereği, ileride bu dosyaya dokunulacaksa
+    güncel içerik istenmeli — mevcut teyit sadece "temizlik yapıldı" bilgisi
+    olarak kaydedildi, dosya içeriği varsayılmadı.
   - Madde #13: Session 2'den değişmedi.
 - **Sıradaki öncelik:** Madde #22'nin THROTTLE/ROTATE_SESSION_ONLY
   alt-kapsamı kapandığı için sırada iki seçenek var: (a) #22'nin kalan
@@ -139,17 +101,14 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
-- **(Yeni) Madde #22 `recordSuccess` runtime doğrulama yöntemi:** yukarıdaki
-  ⚡ ANLIK DURUM'da açıklanan iki seçenekten (mock testi vs. gerçek ortam
-  testi) hangisiyle ilerlenecek, yoksa ikisi birden mi yapılacak —
-  **kullanıcıdan yanıt bekleniyor.**
-- **(Yeni) `PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
-  uygulandı mı?** Bir önceki turda debug-log'u temizlenmiş bir
-  `PersistentStateEngine.ts` verilmişti; bu turda bunun repo'ya fiilen
-  uygulanıp uygulanmadığı (yoksa hâlâ eski debug'lı sürümün mü çalıştığı)
-  soruldu. **Kullanıcıdan yanıt bekleniyor** — netleşmeden bu dosyanın
-  güncel durumu hakkında "uygulandı" varsayımı yapılmayacak (bkz. ⚠️
-  DERSLER, "niyet beyanı ile gerçekleşmiş sonuç arasındaki fark" maddesi).
+- ~~Madde #22 `recordSuccess` runtime doğrulama yöntemi~~ — **karar verildi
+  (bu turda):** mevcut `runtime-check.ts`'e 1 mock senaryo eklenerek
+  genişletilecek. Soru kapandı; **uygulama** için mevcut `runtime-check.ts`
+  dosyasının tam içeriği bekleniyor (Kural #1/#2 — dosya görülmeden kod
+  üretilmeyecek).
+- ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
+  uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı.** (Teyit sözlü
+  seviyede, dosya içeriğiyle ayrıca doğrulanmadı — bkz. ⚡ ANLIK DURUM notu.)
 
 ---
 
@@ -159,7 +118,7 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR olduğu doğrulandı (satır 426/340) ama runtime doğrulaması henüz yapılmadı** — yöntem seçimi kullanıcıdan bekleniyor (bkz. Cevap Bekleyen Sorular); diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı |
+| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR (satır 426/340) ama runtime doğrulaması henüz yapılmadı — mock-genişletme kararı ONAYLANDI, uygulama mevcut `runtime-check.ts` dosyasının paylaşılmasını bekliyor**; diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı. **"Tamamlandı" iddiası bu turda kabul edilmedi** — dar kapsam bile `recordSuccess` runtime doğrulaması olmadan kapanamaz. |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -282,6 +241,14 @@
 > `AuthValidationNetworkError` fix'i ve Madde #33 alt-adım girdileri, 400
 > satır eşiği aşıldığı için (Kural #11) `session_arşiv.md`'ye (Taşıma 2)
 > TAM olarak taşındı — silinmedi. Ayrıntı için o dosya.
+> **(Yeni — Session 3, Taşıma 3)** SESSION_INDEX.md 400 satır eşiği ikinci
+> kez aşıldı. Bu kez ⚡ ANLIK DURUM'daki Madde #6/#7/#8, #9 alt-bug, #23,
+> #33 alt-adım ve süreç dışı `authValidator` bloklarının TAM METİN
+> kopyaları (bunlar Taşıma 1/2'de Kapanan Maddeler Geçmişi'nden arşive
+> gitmişti ama ANLIK DURUM'daki aynı içerik o taşımalarda gözden kaçmıştı)
+> `session_arşiv.md`'ye (Taşıma 3) eklendi, ekteki `session_arsiv_tasima3.md`
+> dosyasına bakınız — silinmedi, sadece SESSION_INDEX'te kısa özet/referans
+> bırakıldı.
 
 - **Madde #22 — alt-kapsam genişletmesi (THROTTLE + ROTATE_SESSION_ONLY→
   `markFailed` köprüsü, tip-guard dahil) KAPANDI (Session 3, runtime +
