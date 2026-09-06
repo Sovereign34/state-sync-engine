@@ -20,6 +20,12 @@
 //          çağrılıyor — cookie/storage set edilmiş olsa bile uygulama
 //          authenticate olmadıysa AuthRestoreFailedError fırlatılır ve mevcut
 //          rollback zincirine (bu try/catch) dahil olur.
+//          DÜZELTME (aynı tur): handleGovernorDecision'ın catch'indeki
+//          enqueueAnomaly çağrısı queueMicrotask ile ertelenmek ZORUNDA —
+//          aksi halde senkron çağrı zinciri, bu çağrının kendi isRecovering
+//          kilidi hâlâ true iken FULL_RECOVERY kararına ulaşır ve
+//          `if (this.isRecovering) return;` guard'ı bunu sessizce yutar
+//          (bkz. handleGovernorDecision içindeki KRİTİK yorum).
 // Dokunma: AdvancedProxyManager'ın ProxyLease sözleşmesi (acquireProxy/
 //          releaseProxy/getProxyMetrics imzaları) ve types/index.ts'teki
 //          ProxyLease şekli. AuthValidationPort sözleşmesi
@@ -338,6 +344,8 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   }
 
   private async handleGovernorDecision(event: GovernorDecisionEvent): Promise<void> {
+    // GEÇİCİ DEBUG — teşhis sonrası kaldırılacak.
+    console.log(`[DEBUG] handleGovernorDecision çağrıldı — action=${event.action}, isRecovering=${this.isRecovering}`);
     if (this.isRecovering) return;
     this.isRecovering = true;
 
@@ -384,13 +392,28 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       // createSessionWithFreshState(false) çağırır — doğrulama (4.5 adımı)
       // sadece preserve=true iken çalıştığı için bu yol ikinci kez
       // AuthRestoreFailedError üretemez.
+      //
+      // KRİTİK — queueMicrotask ile erteleme ZORUNLU: enqueueAnomaly() burada
+      // senkron çağrılırsa, enqueueAnomaly → processQueue → emitDecisionAndWait
+      // → commandPort.handleDecision → handleGovernorDecision zinciri hiçbir
+      // await'e uğramadan (hepsi senkron çağrı) FULL_RECOVERY kararına ulaşır
+      // — VE bu noktada hâlâ BU çağrının isRecovering=true'su aktiftir, çünkü
+      // aşağıdaki finally henüz çalışmadı. Sonuç: `if (this.isRecovering)
+      // return;` guard'ı FULL_RECOVERY'yi SESSİZCE yutar — anomaly kuyruktan
+      // çekilir ama hiç işlenmez (Madde 22 ihlali). queueMicrotask, bu
+      // çağrının bir sonraki mikro-görev turuna ertelenmesini ve dolayısıyla
+      // finally'nin (isRecovering=false) kesinlikle önce çalışmasını
+      // garanti eder.
       if (error instanceof AuthRestoreFailedError) {
-        this.governor.enqueueAnomaly({
-          id: Math.random().toString(36).substring(7),
-          type: AnomalyType.AUTH_VALIDATION_FAILED,
-          scope: AnomalyScope.SESSION,
-          timestamp: Date.now(),
-          rawError: error.message
+        const rawError = error.message;
+        queueMicrotask(() => {
+          this.governor.enqueueAnomaly({
+            id: Math.random().toString(36).substring(7),
+            type: AnomalyType.AUTH_VALIDATION_FAILED,
+            scope: AnomalyScope.SESSION,
+            timestamp: Date.now(),
+            rawError
+          });
         });
       }
     } finally {
