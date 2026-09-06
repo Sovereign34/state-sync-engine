@@ -433,8 +433,6 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   }
 
   private async handleGovernorDecision(event: GovernorDecisionEvent): Promise<void> {
-    // GEÇİCİ DEBUG — teşhis sonrası kaldırılacak.
-    console.log(`[DEBUG] handleGovernorDecision çağrıldı — action=${event.action}, isRecovering=${this.isRecovering}`);
     if (this.isRecovering) return;
     this.isRecovering = true;
 
