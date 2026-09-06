@@ -6,13 +6,18 @@
 // Risk:    Lease mekanizması bozulursa iki session aynı proxy'yi paralel
 //          kullanabilir (orijinal Madde #5 sorunu geri döner) veya expire
 //          olmayan lease'ler proxy'yi kalıcı olarak "meşgul" bırakıp havuzu
-//          tüketebilir.
+//          tüketebilir. Madde #23: getAllMetrics()/getProxyMetrics() dışa
+//          credential (username/password) sızdırırsa, bu bilgi log/telemetry/
+//          monitoring API'sine çıplak ulaşabilir.
 // Dokunma: `ProxyLease` tipi (types/index.ts) ve bu sınıfı kullanan her yer
 //          (şu an yalnızca src/engine/PersistentStateEngine.ts) — bu dosyadaki
 //          `acquireProxy()` imzası değişti (artık ProxyLease döner, ProxyMetrics
 //          değil); entegrasyon ayrı bir KARAR BİLDİRİMİ ile yapılacak.
+//          `PublicProxyMetrics` tipi (types/governor-command.types.ts) — Madde
+//          #23 ile getAllMetrics()/getProxyMetrics() bu tipi döner, ham
+//          ProxyMetrics'i değil.
 
-import { ProxyMetrics, ProxyLease } from '../types';
+import { ProxyMetrics, ProxyLease, PublicProxyMetrics } from '../types';
 
 // Lease süresi dolduğunda otomatik reclaim edilir (crash/unclean-shutdown
 // senaryosu için güvenlik ağı). Kalıcı transaction modeli Madde #8 ile gelecek;
@@ -194,11 +199,23 @@ export class AdvancedProxyManager {
     return `lease_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   }
 
-  public getProxyMetrics(server: string): ProxyMetrics | undefined {
-    return this.proxies.get(server);
+  /**
+   * Madde #23 çözümü: credential alanları (username/password) dışarı
+   * dönmez. `metrics` içindeki geri kalan tüm alanlar bir KOPYA olarak
+   * (spread ile) döner — çağıran taraf döndürülen objeyi mutasyona uğratsa
+   * bile sınıfın içindeki gerçek `ProxyMetrics` etkilenmez.
+   */
+  private toPublicMetrics(metrics: ProxyMetrics): PublicProxyMetrics {
+    const { username, password, ...publicFields } = metrics;
+    return { ...publicFields };
   }
 
-  public getAllMetrics(): ProxyMetrics[] {
-    return Array.from(this.proxies.values());
+  public getProxyMetrics(server: string): PublicProxyMetrics | undefined {
+    const metrics = this.proxies.get(server);
+    return metrics ? this.toPublicMetrics(metrics) : undefined;
+  }
+
+  public getAllMetrics(): PublicProxyMetrics[] {
+    return Array.from(this.proxies.values()).map((metrics) => this.toPublicMetrics(metrics));
   }
 }
