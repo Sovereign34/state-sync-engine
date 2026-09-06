@@ -82,43 +82,23 @@
     429/403 wiring) KAPANDI (Session 3, git mv + tsc + runtime doğrulaması):**
     ayrıntı için Kapanan Maddeler Geçmişi. Madde'nin kendisi kapanmadı —
     crash/requestfailed genişletmesi bilinçli olarak ayrı bir tura bırakıldı.
-  - Madde #13, #22: Session 2'den değişmedi.
   - **Süreç dışı, numarasız `authValidator` wiring bug'ı — TAM KAPANDI
-    (Session 3, derleme + runtime doğrulaması):** `src/index.ts`'te
-    `EngineFactoryOptions`'a zorunlu bir `authValidator: { validationUrl,
-    unauthenticatedUrlPatterns, navigationTimeoutMs? }` alanı eklendi;
-    `createProductionEngine()` bundan bir `DefaultAuthValidator` kurup
-    `PersistentStateEngine`'e 4. argüman olarak geçiyor. `options` parametresinin
-    `= {}` varsayılanı kaldırıldı — `authValidator` verilmeden çağrı derleme
-    zamanında reddediliyor (sessiz fallback yok, kullanıcı kararı). Demo
-    bloğuna (`require.main === module`) gerçek panel/login URL'lerinin yerine
-    açıkça `// TODO` etiketli placeholder'lar eklendi (uydurulmadı).
-    **Runtime doğrulaması sırasında (`runtime-check-authvalidator.ts`, ilk
-    sürüm) kullanıcının verdiği `validationUrl`'in örnek/placeholder
-    (`app.hedef-portal.com`) olduğu ve Codespace'ten DNS çözülemediği ortaya
-    çıktı — bu da `DefaultAuthValidator`'ın o anki hâlinde GERÇEK bir kusuru
-    açığa çıkardı:** ağ/DNS hatası ile "sayfaya ulaşıldı ama login'e
-    yönlendirildi" (gerçek unauthenticated) durumu, ikisi de sessizce `false`
-    dönerek AYIRT EDİLEMİYORDU. Kullanıcı kararıyla `AuthValidationNetworkError`
-    (yeni, `auth-validation.types.ts`) eklendi; `DefaultAuthValidator.validate()`
-    artık ağ/DNS/timeout hatasında VE `!response.ok()` durumunda bu hatayı
-    fırlatıyor — `false`/`true` SADECE sayfaya gerçekten ulaşılıp
-    `unauthenticatedUrlPatterns` değerlendirilebildiğinde dönüyor.
-    Doğrulama: `npx tsc --noEmit` → "0 hata"; `runtime-check-authvalidator-v2.ts`
-    → **Test A** (çözümlenemeyen domain → artık `false` değil,
-    `AuthValidationNetworkError` throw ediyor, `instanceof` ile teyitli) ve
-    **Test B** (gerçek erişilebilir bir hedef — GitHub'ın oturum gerektiren bir
-    sayfası, cookie yok → gerçekten login'e düşüp `false` dönüyor) — ikisi de
-    ekran görüntüsüyle "✅ Tüm testler geçti" teyit edildi. **Sınır:** Test B
-    kullanıcının KENDİ production `validationUrl`/pattern'lerini doğrulamıyor
-    (o hâlâ gerçek değerler verildiğinde ayrıca yapılmalı) — sadece
-    `DefaultAuthValidator`'ın davranışının (ağ hatası ≠ unauthenticated pattern
-    eşleşmesi) düzeldiğini kanıtlıyor.
-- **Sıradaki öncelik:** Madde #9 ertelendiği, #23 ve `authValidator` wiring'i
-  (+ bulunan `AuthValidationNetworkError` regresyonu) tam kapandığı, #33'ün
-  legacy taşıma alt-adımı kapandığı için sırada iki seçenek var: (a) #13
-  credential encryption, (b) #22 telemetry↔metrics bağlantısı. Kullanıcıdan
-  teyit bekleniyor.
+    (Session 3, derleme + runtime doğrulaması).** Ayrıntı için Kapanan
+    Maddeler Geçmişi.
+  - **Madde #22 — alt-kapsam (THROTTLE + ROTATE_SESSION_ONLY→`markFailed`
+    köprüsü, tip-guard dahil): KAPANDI (Session 3, runtime + derleme
+    doğrulaması).** Ayrıntı için Kapanan Maddeler Geçmişi. `runtime-check`
+    betiğiyle 7/7 test PASS (Test1: 3, Test2: 3 — `CHALLENGE_DETECTED`'ta
+    `markFailed` çağrılMADIĞINI doğrulayan regresyon assertion'ı dahil,
+    Test3: 1 — `markFailed('HTTP_429')` eski aktif proxy'ye uygulandı,
+    `http429Count` 0→1); `npx tsc --noEmit` → 0 hata. Madde P0 tablosunda
+    AÇIK kalmaya devam ediyor — diğer `GovernorAction` türleri için
+    instrumentation bağlantısı bu turda kapsanmadı.
+  - Madde #13: Session 2'den değişmedi.
+- **Sıradaki öncelik:** Madde #22'nin THROTTLE/ROTATE_SESSION_ONLY
+  alt-kapsamı kapandığı için sırada iki seçenek var: (a) #22'nin kalan
+  `GovernorAction` türleri için instrumentation bağlantısı, (b) #13
+  credential encryption. Kullanıcıdan teyit bekleniyor.
 
 ---
 
@@ -140,7 +120,7 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık |
+| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); diğer `GovernorAction` türleri için instrumentation bağlantısı henüz kapsanmadı |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -218,8 +198,9 @@
   `getProxyMetrics()` (iç kullanım, gerçek proxy bağlantısı için
   credential'lı) **kasıtlı olarak farklı davranıyor** — bu ayrım
   `AdvancedProxyManager.ts` içinde yorumla işaretlendi. Madde #22
-  (telemetry bağlantısı) ileride sadece `getAllMetrics()`'e bağlanmalı,
-  `getProxyMetrics()`'e ASLA (credential log/telemetriye sızar).
+  (telemetry bağlantısı) SADECE `getAllMetrics()`'e bağlanmalı,
+  `getProxyMetrics()`'e ASLA (credential log/telemetriye sızar). Bu kural
+  THROTTLE/ROTATE_SESSION_ONLY köprüsü kapatılırken de korundu.
 - **(Yeni — Session 3)** `EngineFactoryOptions.authValidator` (`validationUrl`,
   `unauthenticatedUrlPatterns`, `navigationTimeoutMs?`) **ZORUNLU** alan —
   bilinçli olarak opsiyonel bırakılmadı. Composition root bu değerleri
@@ -253,59 +234,36 @@
 
 > **(Yeni — Session 3)** Madde #1, #5, eski #6, tam kapanmış #6/#7/#8 bloğu,
 > #9 alt-bug ve #23 girdileri, 400 satır eşiği aşıldığı için (Kural #11)
-> `session_arşiv.md`'ye TAM olarak taşındı — silinmedi. Ayrıntı için o dosya.
+> `session_arşiv.md`'ye (Taşıma 1) TAM olarak taşındı — silinmedi. Ayrıntı
+> için o dosya.
+> **(Yeni — Session 3)** Süreç dışı `authValidator` wiring bug'ı +
+> `AuthValidationNetworkError` fix'i ve Madde #33 alt-adım girdileri, 400
+> satır eşiği aşıldığı için (Kural #11) `session_arşiv.md`'ye (Taşıma 2)
+> TAM olarak taşındı — silinmedi. Ayrıntı için o dosya.
 
-- **Süreç dışı `authValidator` wiring bug'ı + `AuthValidationNetworkError`
-  fix'i — TAM KAPANDI (Session 3, derleme + runtime + push doğrulaması):**
-  `index.ts`'teki composition-root wiring'i (`EngineFactoryOptions.authValidator`
-  zorunlu alan, `DefaultAuthValidator` DI) tamamlandı. Runtime doğrulaması
-  sırasında kullanıcının verdiği `validationUrl`'in placeholder olduğu ortaya
-  çıktı; bu da `DefaultAuthValidator`'ın ağ/DNS hatasını "unauthenticated"
-  (`false`) ile karıştırdığı GERÇEK bir kusuru açığa çıkardı. Kullanıcı
-  kararıyla yeni `AuthValidationNetworkError` eklendi — `false`/`true` artık
-  SADECE sayfaya gerçekten ulaşılıp pattern değerlendirilebildiğinde dönüyor.
-  Doğrulama: `tsc --noEmit` → 0 hata; `runtime-check-authvalidator-v2.ts` →
-  Test A (çözümlenemeyen domain → `false` değil, `AuthValidationNetworkError`
-  throw, `instanceof` ile teyitli) + Test B (gerçek erişilebilir hedef —
-  GitHub'ın oturum gerektiren sayfası, cookie yok → gerçekten `false`) — ikisi
-  de "✅ Tüm testler geçti" ile ekran görüntüsüyle teyit edildi. `git commit`
-  + `git push` tamamlandı (`1f4e015..948fc44 main -> main`, hata yok — merge
-  sırasında editör takılması bir git/ortam sorunuydu, kodla ilgisizdi).
-  **Sınır:** Test B kullanıcının kendi production `validationUrl`/pattern'lerini
-  DOĞRULAMADI (sadece davranış düzeltmesini kanıtladı) — gerçek değerler
-  geldiğinde ayrıca test edilmeli.
-- **Madde #33 — alt-adım (legacy→src/adapters taşıma + PlaywrightPageObserver
-  429/403 wiring) TAM KAPANDI (Session 3, git mv + tsc + runtime doğrulaması;
-  madde'nin kendisi P0 tablosunda AÇIK kalıyor):** Yeni
-  `PlaywrightPageObserver implements IStateObserver` sınıfı (`src/adapters/`)
-  oluşturuldu — SADECE 429/403 (`RATE_LIMIT_EXCEEDED`/`ACCESS_RESTRICTED`,
-  `IStateObserver.AnomalyType`'a lossless eşlenen iki sinyal) buraya
-  taşındı. `crash`/`requestfailed` (DNS/network) sinyalleri **bilinçli
-  olarak bu turda taşınmadı** — `IStateObserver.AnomalyType`
-  (`RATE_LIMIT_EXCEEDED | ACCESS_RESTRICTED | SESSION_EXPIRED |
-  CHALLENGE_DETECTED`) bunlar için lossless bir karşılık içermiyor, zorla
-  sığdırmak (örn. crash'i `SESSION_EXPIRED` yapmak) yanlış sinyal üretir —
-  genişletme ayrı bir tur. `PersistentStateEngine.attachLifecycleObservers()`
-  bu observer'ı + `AnomalyPayload → SemanticAnomaly` çeviri handler'ını
-  kullanacak şekilde güncellendi; çeviri metodunun `default` dalı beklenmeyen
-  bir `AnomalyType` gelirse sessizce yutmuyor, `console.warn` basıyor
-  (Madde 22 disiplini). **Kod verilirken ortaya çıkan bulgu:**
-  `IStateObserver.ts`/`IResourceAdapter.ts`'in gerçek konumunun
-  `src/adapters/` değil `legacy/` olduğu bulundu — Madde #1'in tam önlemeye
-  çalıştığı legacy-bağımlılığı riskiydi (`find` ile ikisi de teyit edildi).
-  Kullanıcı onayıyla (a) seçildi: iki dosya içerik değiştirilmeden
-  `git mv legacy/IStateObserver.ts src/adapters/IStateObserver.ts` ve aynısı
-  `IResourceAdapter.ts` için uygulandı. Doğrulama: `tsc --noEmit` → önce
-  "Found 2 errors in 2 files" (`PlaywrightPageObserver.ts:33`,
-  `PersistentStateEngine.ts:54`, taşıma öncesi import kırıklığı), taşıma
-  sonrası → 0 hata; `runtime-check.ts` → "✅ Tüm testler geçti" (Madde
-  #6/#7/#8 regresyonu yok); `git status` rename'i %100 eşleşme olarak
-  gösterdi (silme+ekleme değil); `git commit` + `git push` temiz
-  (`484afae..4f4840b main -> main`). **Sınır:** Madde #33'ün kendisi
-  KAPANMADI — sadece bu alt-adım (429/403 wiring + legacy taşıma). Açık
-  kalanlar: crash/requestfailed genişletmesi (ayrı tur) ve `legacy/`
-  klasöründe başka unutulmuş dosya olup olmadığının genel taraması
-  (yapılmadı, sadece bu iki dosya için nokta atışı `find` çalıştırıldı).
+- **Madde #22 — alt-kapsam genişletmesi (THROTTLE + ROTATE_SESSION_ONLY→
+  `markFailed` köprüsü, tip-guard dahil) KAPANDI (Session 3, runtime +
+  derleme doğrulaması; madde'nin kendisi P0 tablosunda AÇIK kalıyor):**
+  `THROTTLE` aksiyonu için `markFailed` köprüsü önceki turda kapatılmıştı;
+  bu turda `ROTATE_SESSION_ONLY` aksiyonu için aynı köprü + iki aksiyon
+  arasında doğru ayrımı yapan bir tip-guard eklendi (`CHALLENGE_DETECTED`
+  gibi diğer aksiyonlarda `markFailed` YANLIŞLIKLA tetiklenmemeli — bu,
+  Test 2'nin yeni regresyon assertion'ının konusu). Doğrulama —
+  `runtime-check` betiğiyle **7/7 PASS, 0 FAIL**:
+  - Test 1 (3 assertion) — ayrıntı bu turda paylaşılmadı, önceki turdan
+    geçerliliğini koruyor olarak kabul edildi.
+  - Test 2 (3 assertion) — `CHALLENGE_DETECTED` action'ında `markFailed`
+    çağrıl**MADIĞI** yeni regresyon assertion'ı ile doğrulandı.
+  - Test 3 (1 assertion) — `markFailed('HTTP_429')` eski aktif proxy'ye
+    doğru uygulandı, `http429Count` 0→1 değişimi doğrulandı.
+  `npx tsc --noEmit` → temiz prompt, **0 hata**.
+  **Sınır:** Madde #22'nin diğer `GovernorAction` türleri (varsa —
+  `FULL_RECOVERY` dahil) için instrumentation bağlantısı bu turda
+  kapsanmadı; madde bu nedenle P0 tablosunda AÇIK kalmaya devam ediyor.
+  **Açık nokta:** Bu turun test/derleme ortamında `ts-node@10.9.2` ile
+  `typescript@^7.0.2` arasında bir uyumsuzluk gözlemlendi (`tsx` ile
+  atlatıldı) — ayrıntı ve genelleştirilebilirlik kararı için aşağıdaki
+  ⚠️ DERSLER bölümüne bakınız.
 
 ---
 
@@ -356,14 +314,23 @@
   yazıyorum" değil, "import ettiğim şey gerçekte nerede duruyor" sorusunun
   da ayrıca kontrol edilmesi gerektiğini gösterdi; "Madde X kapandı" etiketi
   benzer riskli dosyaların tamamının tarandığı anlamına gelmez.
+- **(Yeni — Session 3)** Test/derleme aracı sürüm uyumsuzluğu (bu turda:
+  `ts-node@10.9.2` + `typescript@^7.0.2`) çalıştırma zamanında KOD
+  kaynaklıymış gibi görünen bir hataya yol açabilir — kök sebep kodda değil
+  araç/sürüm zincirindeydi, `tsx` ile atlatılınca ortaya çıktı. Ders: bir
+  betik çalıştırma hatası alındığında önce "hangi araç, hangi sürüm"
+  kontrol edilmeli; kod içi teşhise (Kural #1 — tahmin etme) bundan önce
+  geçilmemeli. Bu proje TypeScript/Node tabanlı olduğu için sürüm
+  uyumsuzlukları tekrar edebilir — bu nedenle not projeye genel, tek bir
+  kullanıcının ortamına özgü değil.
 
 ---
 
-*Not (Session 3 sonu, `wc -l` ile doğrulandı): Bu dosya Madde #33 girdisi
-eklendikten sonra 420 satıra ulaşmıştı — 400 eşiğini aştı (Kural #11).
-Madde #1, #5, eski #6, tam kapanmış #6/#7/#8 bloğu, #9 alt-bug ve #23
-girdileri (en eski kapanmış içerik) `session_arşiv.md`'ye (Taşıma 1) TAM
-olarak taşındı; hiçbir şey özetlenmedi/silinmedi. SESSION_INDEX.md şimdi
-aşağıdaki satır sayısındadır — henüz açık maddeler (P0/P1/P2), anlık durum
-ve en yeni iki kapanış (authValidator wiring, Madde #33 alt-adımı)
-burada kalmaya devam ediyor.*
+*Not (Session 3, `wc -l` ile doğrulandı): Madde #22 alt-kapsam girdisi
+eklenmesiyle dosya önce 400 satır eşiğine yaklaşacaktı (Kural #11); bunu
+önlemek için en eski iki kapanmış girdi (Süreç dışı `authValidator` wiring
+bug'ı + Madde #33 alt-adımı) `session_arşiv.md`'ye (Taşıma 2) TAM olarak
+taşındı — hiçbir şey özetlenmedi/silinmedi, ayrıntı için o dosya.
+SESSION_INDEX.md şimdi **335 satırdır** — sadece en yeni kapanış (Madde #22
+alt-kapsamı) burada kalıyor; henüz açık maddeler (P0/P1/P2) ve anlık durum
+değişmeden korunuyor.*
