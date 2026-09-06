@@ -135,3 +135,96 @@ aktif çalışmayla doğrudan ilişkili olduğu için SESSION_INDEX.md'de kaldı
   kalanlar: crash/requestfailed genişletmesi (ayrı tur) ve `legacy/`
   klasöründe başka unutulmuş dosya olup olmadığının genel taraması
   (yapılmadı, sadece bu iki dosya için nokta atışı `find` çalıştırıldı).
+----
+## TAŞIMA 3 (Session 3 — SESSION_INDEX.md 400 satır eşiği ikinci kez aşıldığında)
+
+> Kaynak: SESSION_INDEX.md ⚡ ANLIK DURUM bölümü. Bu bloklar daha önce
+> Kapanan Maddeler Geçmişi'nden Taşıma 1/2 ile arşive gönderilmişti, ama
+> aynı içeriğin ANLIK DURUM'daki tam-metin kopyaları o taşımalarda
+> gözden kaçmıştı — bu turda onlar da taşınıyor. Hiçbir şey özetlenmedi,
+> tam metin aşağıda.
+
+### Madde #6, #7, #8: KAPANDI
+
+`runtime-check.ts` (mock `Browser` + mock `AdvancedProxyManager` ile
+Governor↔Engine mantığını izole eden doğrulama betiği) `npx tsx
+runtime-check.ts` ile çalıştırıldı, ekran görüntüsüyle teyit edildi:
+- Test 1 (iki farklı anomaly art arda enqueue): `acquireProxy()` tam 2
+  kez çağrıldı — ikinci decision kaybolmadı (#6), legacy
+  `.on('decision',...)` hâlâ genel EventEmitter olarak tetikleniyor ama
+  `PersistentStateEngine` artık ondan değil `RecoveryCommandPort`
+  üzerinden işliyor (#7).
+- Test 2 (kasıtlı `newContext()` hatası): eski context DEĞİŞMEDİ
+  (rollback çalıştı), başarısız denemenin lease'i release edildi —
+  sızıntı yok (#8).
+- Sonuç satırı: "✅ Tüm testler geçti" (`failures === 0` olmadan bu satır
+  basılmaz).
+- **Kapsam sınırı:** bu doğrulama gerçek Playwright/proxy altyapısını
+  test ETMEDİ — Governor/Engine arası sıralama ve komut-yönlendirme
+  mantığını mock'larla izole doğruladı. Gerçek network/browser
+  entegrasyonunun sağlıklı çalıştığı ayrı bir doğrulama konusu.
+
+### Madde #9 — alt-bug kısmı KAPANDI (mock), gerçek entegrasyon ERTELENDİ
+
+Madde #9 üzerinde test tasarımı yapılırken ayrı bir re-entrancy bug'ı
+ortaya çıktı: `PersistentStateEngine.handleGovernorDecision`'ın catch
+bloğundaki senkron `this.governor.enqueueAnomaly(...)` çağrısı,
+`isRecovering` guard'ını sessizce yutuyordu — senkron zincir
+(`enqueueAnomaly → processQueue → emitDecisionAndWait →
+commandPort.handleDecision → handleGovernorDecision`) hiçbir await'e
+uğramadan aynı çağrı yığınında ilerliyordu. Ayrı bir madde açılmadı, #9'un
+kapsamına dahil edildi.
+
+**[KARAR BİLDİRİMİ] ile onaylanan fix (Confidence: HIGH):** senkron
+`enqueueAnomaly` çağrısı `queueMicrotask(() => ...)` ile bir sonraki
+tick'e ertelendi (`setTimeout(...,0)` değil — mikrotask sırası event
+loop'a çıkmadan çalıştığı için Node ortamında daha öngörülebilir).
+
+Fix, `runtime-check-madde9.ts` (Senaryo A: `validate=false` — rollback +
+guard'ın gerçekten aşıldığını + re-entrancy olmadığını doğrular; Senaryo
+B: `validate=true` — normal COMMIT akışının bozulmadığını doğrular) ile
+test edildi. Betik kullanıcının gerçek ortamında (gerçek
+`AdvancedProxyManager`/playwright ile) çalıştırıldı, debug satırlı
+referans çıktı paylaşıldı:
+```
+[DEBUG] handleGovernorDecision çağrıldı — action=ROTATE_SESSION_ONLY, isRecovering=false
+[DEBUG] handleGovernorDecision çağrıldı — action=FULL_RECOVERY, isRecovering=false
+[DEBUG] handleGovernorDecision çağrıldı — action=ROTATE_SESSION_ONLY, isRecovering=false
+```
+→ **Sonuç: re-entrancy fix çalışıyor, guard sorunu YOK.**
+
+**İkinci kritik hata ihtimali elendi:** `grep -n "kritik hata" /tmp/out.log`
+tüm log dosyasında tek bir eşleşme döndürdü (12. satır — Senaryo A'nın
+kasıtlı enjekte ettiği `AuthRestoreFailedError`, testin beklenen parçası).
+Gizli/ikinci bir hata YOK. Log'un geri kalanı (rollback, lease release,
+Senaryo B COMMIT, queue boş) tümü ✓/✅ ile bitiyor — **"Tüm testler geçti"**
+onaylandı.
+
+**Kapsam ve karar (Session 3, kullanıcı onaylı):** guard/re-entrancy
+alt-bug'ı mock seviyesinde tam doğrulandı ve bu alt-kapsam KAPANDI. Ancak
+bu doğrulama gerçek Playwright/proxy/`DefaultAuthValidator` ile değil,
+mock `AuthValidationPort`/`Browser`/`AdvancedProxyManager` ile yapıldı —
+Madde #9'un asıl konusu olan **gerçek ortam entegrasyon testi** (gerçek
+context'te cookie restore edilip gerçek auth doğrulamasının başarısız
+olduğu senaryo) henüz yapılmadı. Kullanıcı kararıyla bu **projenin sonuna
+ertelendi** — #9 bu nedenle P0 tablosunda AÇIK kalmaya devam ediyor, aktif
+çalışılmıyor.
+
+### Madde #23: KAPANDI (Session 3, tsc + runtime doğrulaması)
+
+Bu süreçte bir regresyon (`getProxyMetrics()` yanlışlıkla credential'sız
+tipe çevrilmiş, gerçek proxy authentication'ı kırmıştı) ortaya çıktı ve
+aynı turda düzeltildi — ders: Madde #23'ün kapsamını genişletirken
+(`getAllMetrics()`'ten `getProxyMetrics()`'e) gerçek tüketici kodu
+görülmeden onay istenmemeliydi.
+
+### Madde #33 — alt-adım KAPANDI (Session 3, git mv + tsc + runtime doğrulaması)
+
+legacy→src/adapters taşıma + `PlaywrightPageObserver` 429/403 wiring.
+Madde'nin kendisi kapanmadı — crash/requestfailed genişletmesi bilinçli
+olarak ayrı bir tura bırakıldı.
+
+### Süreç dışı, numarasız `authValidator` wiring bug'ı — TAM KAPANDI (Session 3, derleme + runtime doğrulaması)
+
+Ayrıntı için bu bloğun bir üstündeki Taşıma 2 girdisi (aynı konunun
+`AuthValidationNetworkError` fix'iyle birlikte daha önce taşınmış hâli).
