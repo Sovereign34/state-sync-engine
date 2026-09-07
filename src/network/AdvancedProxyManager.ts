@@ -1,7 +1,10 @@
 // AdvancedProxyManager.ts
 // Amaç:    Proxy havuzunu yönetir; health-score'a göre proxy seçer ve seçilen
 //          proxy'yi bir lease ile "meşgul" işaretleyerek paralel session'ların
-//          aynı proxy'yi paylaşmasını engeller (Madde #5).
+//          aynı proxy'yi paylaşmasını engeller (Madde #5). Opsiyonel olarak
+//          proxy listesini (server + credential) bir ProxyCredentialStore
+//          üzerinden restart'lar arasında kalıcı hale getirir (Madde #2'nin
+//          onaylanmış minimal dilimi + Madde #13 — credential encryption-at-rest).
 // Katman:  network
 // Risk:    Lease mekanizması bozulursa iki session aynı proxy'yi paralel
 //          kullanabilir (orijinal Madde #5 sorunu geri döner) veya expire
@@ -11,7 +14,11 @@
 //          API'sine çıplak ulaşabilir — getProxyMetrics() ise BİLİNÇLİ olarak
 //          credential'lı kalır (bkz. Dokunma), çünkü PersistentStateEngine
 //          gerçek proxy bağlantısı için ona ihtiyaç duyar; bu ikisini
-//          KARIŞTIRMAMAK bu dosyanın en kritik kuralı.
+//          KARIŞTIRMAMAK bu dosyanın en kritik kuralı. (Yeni) credentialStore
+//          verilirse ve registerProxy() dışında bir yerden yazma tetiklenirse
+//          (örn. health metriklerini de persist etme girişimi) bu, kararlaştırılan
+//          edge-case #4'ü (SADECE registerProxy()'de yazma) ihlal eder — bilinçli
+//          bir sınır, genişletmek ayrı bir [KARAR BİLDİRİMİ] gerektirir.
 // Dokunma: `ProxyLease` tipi (types/index.ts) ve bu sınıfı kullanan her yer
 //          (şu an yalnızca src/engine/PersistentStateEngine.ts — hem
 //          `acquireProxy()` hem de credential için `getProxyMetrics()`
@@ -22,8 +29,14 @@
 //          önceki turda yanlışlıkla `PublicProxyMetrics`'e çevrilip
 //          `src/index.ts`/`PersistentStateEngine.ts` derlemesini kırmıştı
 //          (`tsc --noEmit` ile yakalandı), bu tur o hatayı düzeltiyor.
+//          (Yeni) `ProxyCredentialStore` (src/state/) — constructor'a opsiyonel
+//          3. parametre olarak enjekte edilir; bu sınıf ASLA doğrudan
+//          `SecretProvider` import etmez (şifreleme detayı state katmanında
+//          kapsüllenmiş kalmalı, network katmanı sadece "kaydet/yükle" arayüzünü
+//          bilir — katman ayrımı, KOD KALİTESİ #1).
 
 import { ProxyMetrics, ProxyLease, PublicProxyMetrics } from '../types';
+import { ProxyCredentialStore } from '../state/ProxyCredentialStore';
 
 // Lease süresi dolduğunda otomatik reclaim edilir (crash/unclean-shutdown
 // senaryosu için güvenlik ağı). Kalıcı transaction modeli Madde #8 ile gelecek;
@@ -38,28 +51,73 @@ export class AdvancedProxyManager {
   // proxyId (server) -> leaseId (bir proxy'nin şu an leased olup olmadığını O(1) kontrol için)
   private leasedProxyIds: Map<string, string> = new Map();
 
-  constructor(initialProxies: Array<{ server: string; username?: string; password?: string }> = []) {
+  // (Yeni) Opsiyonel — verilmezse davranış tamamen eskisi gibi kalır (sadece
+  // in-memory), verilirse Madde #2/#13 kalıcılığı devreye girer.
+  private readonly credentialStore?: ProxyCredentialStore;
+
+  constructor(
+    initialProxies: Array<{ server: string; username?: string; password?: string }> = [],
+    credentialStore?: ProxyCredentialStore
+  ) {
+    this.credentialStore = credentialStore;
+
+    // (Yeni) Kalıcı kayıtlar ÖNCE yüklenir — registerProxy() ÇAĞRILMADAN,
+    // yani bu adım hiçbir DB yazmasına yol açmaz (kararlaştırılan edge-case #4:
+    // yazma SADECE registerProxy()'de). loadAll() fail-closed'dır (bkz.
+    // ProxyCredentialStore) — bir kayıt bile bozuksa burada throw eder ve
+    // motor hiç başlamaz.
+    if (this.credentialStore) {
+      const persisted = this.credentialStore.loadAll();
+      for (const record of persisted) {
+        this.addProxyToMap(record.server, record.username, record.password);
+      }
+    }
+
+    // initialProxies SONRA işlenir. registerProxy()'nin var olan "zaten
+    // kayıtlıysa dokunma" davranışı (bkz. addProxyToMap) sayesinde DB'den
+    // yüklenmiş bir server, initialProxies'teki eşleşen girdiyle ÜZERİNE
+    // YAZILMAZ — DB, restart sonrası config'e karşı öncelik kazanır. Bu
+    // listedeki DB'de henüz olmayan her proxy, registerProxy() üzerinden
+    // hem map'e hem (varsa) DB'ye tek seferlik yazılır.
     for (const proxy of initialProxies) {
       this.registerProxy(proxy.server, proxy.username, proxy.password);
     }
   }
 
+  /**
+   * (Yeni) Map'e ekleme mantığının tek kaynağı. Sadece gerçekten YENİ bir
+   * proxy eklenip eklenmediğini döner — registerProxy() bu bilgiyi DB
+   * yazmasını tetikleyip tetiklememek için kullanır. DB'ye ASLA burada
+   * yazılmaz (constructor'ın loadAll() yolu bu metodu DB yazmadan kullanır).
+   */
+  private addProxyToMap(server: string, username?: string, password?: string): boolean {
+    if (this.proxies.has(server)) return false;
+
+    this.proxies.set(server, {
+      server,
+      username,
+      password,
+      latencyMs: 0,
+      dnsFailures: 0,
+      tlsFailures: 0,
+      http403Count: 0,
+      http429Count: 0,
+      successCount: 0,
+      failureCount: 0,
+      lastUsed: 0,
+      quarantineUntil: 0,
+    });
+    return true;
+  }
+
   public registerProxy(server: string, username?: string, password?: string): void {
-    if (!this.proxies.has(server)) {
-      this.proxies.set(server, {
-        server,
-        username,
-        password,
-        latencyMs: 0,
-        dnsFailures: 0,
-        tlsFailures: 0,
-        http403Count: 0,
-        http429Count: 0,
-        successCount: 0,
-        failureCount: 0,
-        lastUsed: 0,
-        quarantineUntil: 0,
-      });
+    const isNewProxy = this.addProxyToMap(server, username, password);
+
+    // (Yeni) Kararlaştırılan edge-case #4: DB yazması SADECE burada, SADECE
+    // proxy gerçekten yeni eklenmişken tetiklenir. Zaten kayıtlı bir proxy
+    // için (eskisi gibi) hiçbir şey olmaz — ne map güncellenir ne DB'ye yazılır.
+    if (isNewProxy && this.credentialStore) {
+      this.credentialStore.save(server, username, password);
     }
   }
 
