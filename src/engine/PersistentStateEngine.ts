@@ -73,6 +73,15 @@
 //          (translateObserverAnomaly). crash/requestfailed BİLİNÇLİ OLARAK
 //          taşınmadı — bkz. PlaywrightPageObserver.ts başlığı (IStateObserver'ın
 //          AnomalyType'ında bu ikisi için lossless karşılık yok).
+// (Madde #22 — BU TUR, kullanıcı onaylı düzeltme) handleGovernorDecision():
+//          "kalan GovernorAction türleri için instrumentation" incelemesi
+//          sırasında bulundu — THROTTLE/QUARANTINE_PROXY/ROTATE_SESSION_ONLY/
+//          FULL_RECOVERY'nin hepsi zaten markFailed'e bağlıydı (SESSION_INDEX'in
+//          "kapsanmadı" varsayımı güncel kodu yansıtmıyordu), ama FULL_RECOVERY
+//          case'i anomaly.type'a bakmadan HER durumda 'NETWORK_FAIL'
+//          işaretliyordu. AUTH_VALIDATION_FAILED (proxy'yle ilgisiz, session
+//          state sorunu) artık bu çağrıdan hariç tutuluyor — ROTATE_SESSION_ONLY
+//          case'indeki HTTP_429 vs CHALLENGE_DETECTED ayrımıyla aynı disiplin.
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
@@ -469,7 +478,18 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           break;
 
         case GovernorAction.FULL_RECOVERY:
-          if (this.currentLease) {
+          // (Madde #22 — BU TUR, kullanıcı onaylı düzeltme) FULL_RECOVERY, üç
+          // farklı anomaly tipinden tetiklenebilir: PAGE_CRASH, NETWORK_FAILURE
+          // (proxy/ağ kaynaklı — markFailed makul) VE AUTH_VALIDATION_FAILED
+          // (Madde #9 — restore edilen cookie/localStorage state'i uygulamayı
+          // authenticate edemedi; sorun proxy'de değil session state'inde).
+          // ROTATE_SESSION_ONLY case'indeki aynı disiplinle (satır ~465,
+          // HTTP_429 vs CHALLENGE_DETECTED ayrımı), AUTH_VALIDATION_FAILED
+          // burada markFailed'den HARİÇ tutulur — aksi halde sağlıklı bir
+          // proxy, kendisiyle ilgisi olmayan bir auth-state hatası yüzünden
+          // 'NETWORK_FAIL' ile cezalandırılıp 45sn karantinaya girerdi
+          // (yanlış telemetri, Madde 22 disiplini ihlali).
+          if (this.currentLease && event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED) {
             this.proxyManager.markFailed(this.currentLease.proxyId, 'NETWORK_FAIL');
           }
           this.preservedState = { cookies: [], localStorage: {}, sessionStorage: {} };
