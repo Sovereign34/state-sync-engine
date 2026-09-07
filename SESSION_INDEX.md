@@ -81,9 +81,12 @@
     güncel hâlinden çıkarıldı) — teyit artık dosya içeriğiyle de tutarlı.
   - Madde #13: Session 2'den değişmedi.
 - **Sıradaki öncelik:** Madde #22 kapandığı için P0'da sırada: (a) #13
-  credential/state encryption-at-rest (henüz hiç ele alınmadı), (b) #9'un
-  ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı kullanıcıdan
-  tekrar sorulacak, bkz. 📌 Kritik Teknik Kararlar). Ayrıca hâlâ açık:
+  credential/state encryption-at-rest — secret kaynağı (env var + AES-256-GCM)
+  ve persistence backend'i (SQLite) kullanıcıyla KARARLAŞTIRILDI (bkz. 📌
+  Kritik Teknik Kararlar), ancak kod üretimi için `ProxyCredential` tip
+  tanımı ve `AdvancedProxyManager.ts` HÂLÂ BEKLENİYOR (Kural #2, eksik
+  veriyle çözüm üretilmez); (b) #9'un ertelenmiş gerçek entegrasyon testi
+  (ne zaman ele alınacağı kullanıcıdan tekrar sorulacak). Ayrıca hâlâ açık:
   #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap Bekleyen Sorular).
 
 ---
@@ -205,8 +208,23 @@
   action/anomaly kombinasyonu eklenirse aynı ayrım (anomaly.type'a göre
   proxy'yi suçlamadan önce "bu gerçekten proxy'nin suçu mu" sorusu)
   tekrar sorulmalı.
-- Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
-- Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
+- **(Yeni) Madde #2 — Persistent proxy store backend KARARLAŞTIRILDI: SQLite**
+  (`better-sqlite3`). Gerekçe: tek-node motor, ekstra servis/network bağımlılığı
+  istenmiyor; Redis (ek servis) ve Neon/Postgres (network round-trip, serverless
+  cold-start riski — özellikle `FULL_RECOVERY` anında ekstra gecikme riski) kullanıcı
+  onayıyla elendi.
+- **(Yeni) Madde #13 — Secret yönetimi kaynağı KARARLAŞTIRILDI: env var
+  (`STATE_SYNC_ENCRYPTION_KEY`) + AES-256-GCM envelope encryption, bir
+  `SecretProvider` interface'i arkasında** (ileride Vault/KMS'e geçiş için
+  dependency-inversion, Madde 33 disiplinine uyumlu). Vault/KMS, operasyonel
+  karmaşıklık gerekçesiyle kullanıcı onayıyla elendi.
+- **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
+  Fly.io** — persistent volume (SQLite dosyası için) + resmi Playwright Docker
+  image. Gerekçe: Playwright ağır CPU/RAM + uzun-yaşayan process gerektiriyor,
+  serverless/edge (Vercel, Cloudflare Workers, Lambda) bu nedenle elendi;
+  Hetzner (çıplak VPS) alternatifi, Fly.io'nun sunucu yönetimini (patch,
+  restart-on-crash, secrets) üstlenmesi lehine ertelendi. Kesinleşmiş değil,
+  "aday" — deploy aşamasında tekrar teyit edilecek.
 
 ---
 
