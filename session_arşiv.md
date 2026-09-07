@@ -228,3 +228,113 @@ olarak ayrı bir tura bırakıldı.
 
 Ayrıntı için bu bloğun bir üstündeki Taşıma 2 girdisi (aynı konunun
 `AuthValidationNetworkError` fix'iyle birlikte daha önce taşınmış hâli).
+----
+---
+
+## Taşıma 4 (Session 3) — Madde #22 tam detayı
+
+> Bu blok, SESSION_INDEX.md'nin 400 satır eşiğini aşması nedeniyle (Kural #11)
+> ⚡ ANLIK DURUM ve 📜 KAPANAN MADDELER GEÇMİŞİ bölümlerindeki Madde #22
+> girdilerinin TAM METİN kopyasıdır — silinmedi, SESSION_INDEX'te kısa
+> referans bırakıldı. Bu, mevcut session_arşiv.md'nin sonuna eklenecek
+> YENİ bloktur; dosyanın geri kalanı bu blokla birlikte yeniden üretilmedi
+> (Kural #11 / SELF-CORRECTION tablosu).
+
+### A) ANLIK DURUM'dan taşınan detay
+
+- **Madde #22 — alt-kapsam (THROTTLE + ROTATE_SESSION_ONLY→`markFailed`
+  köprüsü, tip-guard dahil): KAPANDI (Session 3, runtime + derleme
+  doğrulaması).** `runtime-check` betiğiyle 7/7 test PASS; `npx tsc --noEmit`
+  → 0 hata.
+- **Madde #22 — `recordSuccess` köprüsü: KAPANDI (Session 3, runtime
+  doğrulamalı).** `npx tsx runtime-check.ts` gerçek komut çıktısı paylaşıldı
+  (ekran görüntüsü) — TEST 4a PASS (geçerli `latencyMs`=123 ile
+  `recordSuccess(proxy-5, 123)` doğru çağrıldı), TEST 4b PASS (negatif
+  `latencyMs`=-5 ile `recordSuccess` çağrılMADI, guard doğru çalışıyor).
+  Önceki turların TEST 1-3'ü de aynı çalıştırmada PASS. **Sınır aynen
+  geçerli:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
+  hâlâ sadece kod okumasıyla biliniyor, runtime'da ayrıca doğrulanmadı.
+- **Madde #22 — "diğer `GovernorAction` türleri için instrumentation
+  bağlantısı kapsanmadı" iddiası YANLIŞTI, kayıt düzeltildi.**
+  `PersistentStateEngine.ts` (`handleGovernorDecision`) gerçek kod
+  okunarak doğrulandı: THROTTLE, QUARANTINE_PROXY, ROTATE_SESSION_ONLY,
+  FULL_RECOVERY case'lerinin HEPSİ zaten `markFailed`'e bağlıydı
+  (`if (this.currentLease) { ... }` deseniyle) — bu turdan önce de
+  kodda mevcuttu. `NO_ACTION` kasıtlı olarak bağlı değil. Bu, daha önce
+  `recordSuccess` için yaşanan "dosya başlığındaki eski not güncel
+  gerçeği yansıtmıyordu" kalıbının bir tekrarı (bkz. ⚠️ DERSLER).
+- **Madde #22 — kod okuması sırasında YENİ bir bulgu: `FULL_RECOVERY`
+  case'i anomaly tipine bakmadan HER durumda `markFailed(proxyId,
+  'NETWORK_FAIL')` çağırıyordu.** `FULL_RECOVERY`, üç farklı anomaly
+  tipinden tetiklenebiliyor (`PAGE_CRASH`, `NETWORK_FAILURE`,
+  `AUTH_VALIDATION_FAILED`) — son ikisi proxy'yle ilgisiz olabilir,
+  özellikle `AUTH_VALIDATION_FAILED` tamamen session-state sorunu, proxy
+  sağlıklı olabilir. Bu, `ROTATE_SESSION_ONLY` case'inde zaten uygulanmış
+  disiplinin (HTTP_429 vs CHALLENGE_DETECTED type-guard'ı) `FULL_RECOVERY`'ye
+  uygulanmamış hâli — sağlıklı proxy'ler gereksiz yere 45sn karantinaya
+  giriyordu (yanlış telemetri, Madde 22 disiplini ihlali).
+  **[KARAR BİLDİRİMİ] kullanıcı onaylandı ve UYGULANDI:** `FULL_RECOVERY`
+  case'i artık `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED`
+  koşuluyla sınırlı — `AUTH_VALIDATION_FAILED` artık `markFailed`'den
+  hariç tutuluyor. **Durum: KAPANDI (Session 3).** `npx tsc --noEmit` →
+  temiz, 0 hata (ekran görüntüsü). Ardından `runtime-check.ts`'e TEST 5
+  eklendi (5a: `NETWORK_FAILURE` → `markFailed('NETWORK_FAIL')` HÂLÂ
+  çağrılıyor — guard fazla geniş değil; 5b: `AUTH_VALIDATION_FAILED` →
+  `markFailed` HİÇ ÇAĞRILMIYOR — asıl bulgunun regresyon testi),
+  `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI, 5a/5b ikisi de PASS
+  (ekran görüntüsü, gerçek komut çıktısı görüldü).
+- **Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3).**
+  THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY → hepsi
+  doğru tip-guard'larla `markFailed`'e bağlı; başarı yolu `recordSuccess`'e
+  guard'lı bağlı. Tamamı `runtime-check.ts` (TEST 1-5, hepsi PASS) ve
+  `npx tsc --noEmit` (0 hata) ile runtime + derleme seviyesinde doğrulandı.
+  Madde P0 tablosundan kaldırıldı, ayrıntı Kapanan Maddeler Geçmişi'nde.
+
+### B) Kapanan Maddeler Geçmişi'nden taşınan detay
+
+- **Madde #22 — alt-kapsam genişletmesi (THROTTLE + ROTATE_SESSION_ONLY→
+  `markFailed` köprüsü, tip-guard dahil) KAPANDI (Session 3, runtime +
+  derleme doğrulaması; madde'nin kendisi P0 tablosunda AÇIK kalıyor):**
+  `THROTTLE` aksiyonu için `markFailed` köprüsü önceki turda kapatılmıştı;
+  bu turda `ROTATE_SESSION_ONLY` aksiyonu için aynı köprü + iki aksiyon
+  arasında doğru ayrımı yapan bir tip-guard eklendi (`CHALLENGE_DETECTED`
+  gibi diğer aksiyonlarda `markFailed` YANLIŞLIKLA tetiklenmemeli). Doğrulama
+  — `runtime-check` betiğiyle **7/7 PASS, 0 FAIL**, `npx tsc --noEmit` →
+  temiz, **0 hata**.
+- **Madde #22 — `recordSuccess()` köprüsü KAPANDI (Session 3, runtime
+  doğrulamalı):** `PlaywrightPageObserver`'ın genuinely başarılı (2xx)
+  response'larda emit ettiği `'state'` event'i, `handleObserverState()` ile
+  dinlenip `proxyManager.recordSuccess()`'e bağlanıyor; `latencyMs`
+  sayısal değilse veya negatifse kayıt yapılmıyor (guard). `runtime-check.ts`'e
+  eklenen TEST 4, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI ve PASS etti
+  (4a: geçerli latency ile çağrıldı, 4b: negatif latency ile guard
+  ÇAĞIRMADI) — gerçek komut çıktısı görüldü, "niyet beyanı" aşaması bitti.
+  **Sınır:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
+  hâlâ sadece kod okumasıyla biliniyor.
+- **Madde #22 — "diğer `GovernorAction` türleri kapsanmadı" kaydı
+  DÜZELTİLDİ:** Önceki turlarda P0 tablosuna ve bu bölüme yazılan
+  "THROTTLE/ROTATE_SESSION_ONLY dışındaki türler bağlı değil" iddiası,
+  `PersistentStateEngine.ts`'in tam içeriği görülünce yanlış çıktı —
+  QUARANTINE_PROXY ve FULL_RECOVERY zaten `markFailed`'e bağlıydı (muhtemelen
+  daha önceki, ayrıntısı bu SESSION_INDEX'e hiç yazılmamış bir turda
+  eklenmişti). Ders için bkz. ⚠️ DERSLER.
+- **Madde #22 — TAM KAPANDI (Session 3), P0 tablosundan kaldırıldı:**
+  Son açık alt-kapsam olan `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
+  tip-guard'ı doğrulandı. Bulgu: `FULL_RECOVERY` case'i anomaly tipine
+  bakmadan HER durumda `markFailed('NETWORK_FAIL')` çağırıyordu; ancak
+  `FULL_RECOVERY` üç farklı anomaly tipinden tetiklenebiliyor (`PAGE_CRASH`,
+  `NETWORK_FAILURE`, `AUTH_VALIDATION_FAILED`) ve sonuncusu proxy'yle
+  ilgisiz (tamamen session/auth-state sorunu) — sağlıklı proxy'ler
+  gereksiz yere karantinaya giriyordu. Düzeltme: case artık
+  `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED` koşuluyla
+  sınırlı. Doğrulama: `npx tsc --noEmit` → 0 hata; `runtime-check.ts`'e
+  eklenen TEST 5, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI — 5a PASS
+  (`NETWORK_FAILURE` hâlâ `markFailed` tetikliyor, guard fazla geniş
+  değil), 5b PASS (`AUTH_VALIDATION_FAILED` artık `markFailed`
+  tetiklemiyor, asıl bulgunun regresyonu). `PAGE_CRASH` yolu (ham
+  `page.on('crash')`) bu testte kasıtlı kapsam dışı bırakıldı — Madde #33
+  kapsamında ayrıca ele alınacak. Sonuç: Madde #22'nin TÜM alt-kapsamları
+  (THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY →
+  `markFailed`; başarı yolu → `recordSuccess`) runtime + derleme
+  seviyesinde doğrulandı, madde P0 tablosundan kaldırıldı.
+
