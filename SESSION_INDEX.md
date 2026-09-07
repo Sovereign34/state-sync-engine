@@ -29,88 +29,55 @@
   - **Madde #22 — alt-kapsam (THROTTLE + ROTATE_SESSION_ONLY→`markFailed`
     köprüsü, tip-guard dahil): KAPANDI (Session 3, runtime + derleme
     doğrulaması).** Ayrıntı için Kapanan Maddeler Geçmişi. `runtime-check`
-    betiğiyle 7/7 test PASS (Test1: 3, Test2: 3 — `CHALLENGE_DETECTED`'ta
-    `markFailed` çağrılMADIĞINI doğrulayan regresyon assertion'ı dahil,
-    Test3: 1 — `markFailed('HTTP_429')` eski aktif proxy'ye uygulandı,
-    `http429Count` 0→1); `npx tsc --noEmit` → 0 hata. Madde P0 tablosunda
-    AÇIK kalmaya devam ediyor — diğer `GovernorAction` türleri için
-    instrumentation bağlantısı bu turda kapsanmadı.
-  - **(Yeni) Madde #22 — `recordSuccess` köprüsü (başarı yolu): kod
-    tarafında MEVCUT olduğu doğrulandı, runtime doğrulaması HENÜZ YOK.**
-    Bir önceki turda `recordSuccess`'in kapsam dışı olduğu söylenmişti; bu
-    iddia yanlıştı (muhtemelen eski dosya başlığındaki bir nottan
-    kaynaklandı — bkz. ⚠️ DERSLER, "dosya başlığındaki eski not" maddesi,
-    aynı hata kalıbının tekrarı). Bu turda doğrulandı: `handleObserverState`
-    kodda mevcut (satır 426), `attachLifecycleObservers` içinde bağlı
-    (satır 340). Kayıt düzeltildi: **`recordSuccess` kapsam dışı DEĞİL,
-    kodda.**
-    - `npx tsc --noEmit` temiz olması sadece "derleniyor" demek —
-      `recordSuccess`'in fiilen çağrıldığı **runtime'da** henüz
-      gözlemlenmedi. Mevcut `runtime-check.ts` bunu test etmiyor (o script
-      THROTTLE/QUARANTINE/ROTATE için mock kullanıyor; `response.ok()`/
-      `timing()` başarı senaryosu YOK).
-    - **Kullanıcıdan yanıt bekleniyor** — iki seçenek sunuldu, hangisiyle
-      devam edileceği netleşmeden runtime doğrulaması yapılmadı:
-      1. Yeni bir mock testi (`runtime-check-recordsuccess.ts` — mock
-         `Response` nesnesi `status()=200`/`ok()=true`, `request().timing()
-         .responseEnd` geçerli bir sayı; `recordSuccess`'in çağrıldığını VE
-         geçersiz/negatif `responseEnd` durumunda çağrılMADIĞINI doğrulayan
-         2 assertion) — Claude yazar, kullanıcı çalıştırır.
-      2. Gerçek ortamda bir proxy üzerinden gerçek sayfa açılıp
-         `getProxyMetrics()`'in `successCount`/`latencyMs` alanlarının
-         değiştiği gözlemlenir.
-    - Bu madde KAPANMADI — sadece "kod var mı" sorusu netleşti, "runtime'da
-      çalışıyor mu" sorusu hâlâ açık.
-    - **(Yeni) [KARAR BİLDİRİMİ] onaylandı ve UYGULANDI (Confidence: HIGH):**
-      `runtime-check.ts` genişletildi — TEST 4 eklendi:
-      `PersistentStateEngine`'in private `handleObserverState()` metodu
-      `(engine as any)` ile doğrudan çağrılıyor (gerçek `PlaywrightPageObserver`
-      response/timing zinciri KASITLI OLARAK mock'lanmadı — bu betiğin
-      beyan edilmiş kapsam sınırı dışında, ayrıntı dosya başlığı (e)'de).
-      İki assertion: (4a) geçerli `latencyMs` (123) ile `recordSuccess`
-      doğru `proxyId`/`latencyMs` ile çağrılıyor mu; (4b) negatif `latencyMs`
-      (-5) ile `recordSuccess` ÇAĞRILMIYOR mu (guard regresyon testi).
-      `!this.currentLease` dalı bilinçli olarak KAPSAM DIŞI bırakıldı (kod
-      akışında lease'siz bir an yaratmak diğer testleri bozmadan mümkün
-      değil) — bu, "no-op çalışıyor" iddiası DEĞİL, sadece kod okumasıyla
-      biliniyor.
-      **Durum: kod üretildi ve kullanıcıya teslim edildi, henüz
-      ÇALIŞTIRILMADI.** `npx tsc --noEmit` / `npx ts-node --transpile-only
-      runtime-check.ts` (ya da `tsx`) çıktısı gelmeden bu madde "doğrulandı"
-      sayılmayacak (⚠️ DERSLER — "niyet beyanı ile gerçekleşmiş sonuç"
-      ayrımı).
-      - **(Yeni) İlk çalıştırma denemesi: ARAÇ/ORTAM HATASI, test SONUCU
-        DEĞİL.** `npx ts-node --transpile-only runtime-check.ts`,
-        `ts-node/dist/configuration.js` içindeki `readConfig`/
-        `findAndReadConfig` aşamasında (tsconfig okuma) patladı — hiçbir
-        TEST (1-4) çalışmadı, `runtime-check.ts`'in kendi mantığı hiç
-        devreye girmedi. Node.js v24.14.0 ortamında. Bu, ⚠️ DERSLER'de
-        zaten kayıtlı olan `ts-node@10.9.2`+`typescript@^7.0.2`
-        uyumsuzluk kalıbına benziyor ama asıl hata mesajının ilk satırı
-        (ekran görüntüsünde kırpılmıştı) henüz görülmedi — kesin kök sebep
-        TEYİT EDİLMEDİ, sadece kalıp eşleşmesi var. `npx tsx
-        runtime-check.ts` ile tekrar deneme veya tam hata mesajı
-        istendi, **sonuç bekleniyor**.
-    - **(Yeni) Kullanıcı önerisi reddedildi (kayıt için):** "recordSuccess
-      bu kapsam dışı, mevcut runtime-check.ts yeterli" önerisi, bu turun
-      kendi bulgusuyla (kod var ama runtime'da hiç test edilmemiş)
-      çeliştiği için kabul edilmedi; yukarıdaki mock-genişletme kararı
-      onaylandı.
+    betiğiyle 7/7 test PASS; `npx tsc --noEmit` → 0 hata.
+  - **(Yeni) Madde #22 — `recordSuccess` köprüsü: KAPANDI (Session 3,
+    runtime doğrulamalı).** `npx tsx runtime-check.ts` gerçek komut çıktısı
+    paylaşıldı (ekran görüntüsü) — TEST 4a PASS (geçerli `latencyMs`=123 ile
+    `recordSuccess(proxy-5, 123)` doğru çağrıldı), TEST 4b PASS (negatif
+    `latencyMs`=-5 ile `recordSuccess` çağrılMADI, guard doğru çalışıyor).
+    Önceki turların TEST 1-3'ü de aynı çalıştırmada PASS. **Sınır aynen
+    geçerli:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
+    hâlâ sadece kod okumasıyla biliniyor, runtime'da ayrıca doğrulanmadı.
+  - **(Yeni) Madde #22 — "diğer `GovernorAction` türleri için instrumentation
+    bağlantısı kapsanmadı" iddiası YANLIŞTI, kayıt düzeltildi.**
+    `PersistentStateEngine.ts` (`handleGovernorDecision`) gerçek kod
+    okunarak doğrulandı: THROTTLE, QUARANTINE_PROXY, ROTATE_SESSION_ONLY,
+    FULL_RECOVERY case'lerinin HEPSİ zaten `markFailed`'e bağlıydı
+    (`if (this.currentLease) { ... }` deseniyle) — bu turdan önce de
+    kodda mevcuttu. `NO_ACTION` kasıtlı olarak bağlı değil. Bu, daha önce
+    `recordSuccess` için yaşanan "dosya başlığındaki eski not güncel
+    gerçeği yansıtmıyordu" kalıbının bir tekrarı (bkz. ⚠️ DERSLER).
+  - **(Yeni) Madde #22 — kod okuması sırasında YENİ bir bulgu: `FULL_RECOVERY`
+    case'i anomaly tipine bakmadan HER durumda `markFailed(proxyId,
+    'NETWORK_FAIL')` çağırıyordu.** `FULL_RECOVERY`, üç farklı anomaly
+    tipinden tetiklenebiliyor (`PAGE_CRASH`, `NETWORK_FAILURE`,
+    `AUTH_VALIDATION_FAILED`) — son ikisi proxy'yle ilgisiz olabilir,
+    özellikle `AUTH_VALIDATION_FAILED` tamamen session-state sorunu, proxy
+    sağlıklı olabilir. Bu, `ROTATE_SESSION_ONLY` case'inde zaten uygulanmış
+    disiplinin (HTTP_429 vs CHALLENGE_DETECTED type-guard'ı) `FULL_RECOVERY`'ye
+    uygulanmamış hâli — sağlıklı proxy'ler gereksiz yere 45sn karantinaya
+    giriyordu (yanlış telemetri, Madde 22 disiplini ihlali).
+    **[KARAR BİLDİRİMİ] kullanıcı onaylandı ve UYGULANDI:** `FULL_RECOVERY`
+    case'i artık `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED`
+    koşuluyla sınırlı — `AUTH_VALIDATION_FAILED` artık `markFailed`'den
+    hariç tutuluyor. **Durum: kod üretildi, tam dosya (`PersistentStateEngine.ts`)
+    kullanıcıya teslim edildi, HENÜZ `tsc --noEmit`/runtime ile
+    doğrulanmadı** — gerçek çıktı gelmeden bu düzeltme "doğrulandı"
+    sayılmayacak (⚠️ DERSLER — niyet/sonuç ayrımı).
   - **(Yeni) `PersistentStateEngine.ts` debug-temiz sürüm: kullanıcı
     tarafından repo'ya uygulandığı TEYİT EDİLDİ** (debug `console.log`
     temizliği onaylanmış, kod son haline getirilmiş). Not: bu teyit sözlü
-    beyan seviyesinde — dosyanın kendisi bu session'a yüklenmedi, ayrıca
-    `grep`/diff ile doğrulanmadı. ⚠️ DERSLER'deki "niyet beyanı ile
-    gerçekleşmiş sonuç" ayrımı gereği, ileride bu dosyaya dokunulacaksa
-    güncel içerik istenmeli — mevcut teyit sadece "temizlik yapıldı" bilgisi
-    olarak kaydedildi, dosya içeriği varsayılmadı.
+    beyan seviyesinde — dosyanın kendisi bu session'a yüklenmiş VE gerçek
+    içeriği görülmüştür (yukarıdaki `FULL_RECOVERY` bulgusu bu dosyanın
+    güncel hâlinden çıkarıldı) — teyit artık dosya içeriğiyle de tutarlı.
   - Madde #13: Session 2'den değişmedi.
-- **Sıradaki öncelik:** Madde #22'nin THROTTLE/ROTATE_SESSION_ONLY
-  alt-kapsamı kapandığı için sırada iki seçenek var: (a) #22'nin kalan
-  `GovernorAction` türleri için instrumentation bağlantısı, (b) #13
-  credential encryption. Buna ek olarak #22'nin `recordSuccess` köprüsü için
-  yukarıdaki iki test seçeneğinden hangisiyle ilerleneceği de netleşmeli.
-  Kullanıcıdan teyit bekleniyor.
+- **Sıradaki öncelik:** `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi
+  için `npx tsc --noEmit` + (mümkünse) `runtime-check.ts`'e yeni bir
+  regresyon testi (mevcut desende: `AUTH_VALIDATION_FAILED` anomaly'siyle
+  `FULL_RECOVERY` tetiklendiğinde `markFailed` çağrılMADIĞINI doğrulayan)
+  sonucu bekleniyor. Bu kapandıktan sonra: (a) #13 credential encryption,
+  (b) #9'un ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı
+  kullanıcıdan tekrar sorulacak, bkz. 📌 Kritik Teknik Kararlar).
 
 ---
 
@@ -123,14 +90,13 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
-- ~~Madde #22 `recordSuccess` runtime doğrulama yöntemi~~ — **karar verildi:**
-  mevcut `runtime-check.ts` TEST 4 ile genişletildi, kullanıcıya teslim
-  edildi. **Yeni açık nokta:** betik henüz çalıştırılmadı — gerçek çıktı
-  (`✅ Tüm testler geçti` / hangi test PASS/FAIL) paylaşılmadan Madde #22
-  kapanmayacak.
+- **(Yeni) `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi doğrulama
+  yöntemi:** `tsc --noEmit` yeterli mi, yoksa `runtime-check.ts`'e yeni bir
+  TEST 5 (AUTH_VALIDATION_FAILED anomaly'siyle FULL_RECOVERY'de markFailed
+  çağrılMADIĞını doğrulayan) mı eklensin? **Kullanıcıdan yanıt bekleniyor.**
 - ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
-  uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı.** (Teyit sözlü
-  seviyede, dosya içeriğiyle ayrıca doğrulanmadı — bkz. ⚡ ANLIK DURUM notu.)
+  uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı** — bu turda
+  dosyanın kendisi de görülüp içerik teyidiyle tutarlı bulundu.
 
 ---
 
@@ -140,7 +106,7 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE ve ROTATE_SESSION_ONLY→`markFailed` köprüsü (tip-guard dahil) TAMAMLANDI ve doğrulandı (bkz. Kapanan Maddeler Geçmişi); **`recordSuccess` köprüsü kodda VAR (satır 426/340), test kodu (`runtime-check.ts` TEST 4) yazılıp teslim edildi ama HENÜZ ÇALIŞTIRILMADI** — gerçek çıktı gelmeden kapanmayacak; diğer `GovernorAction` türleri için instrumentation bağlantısı da henüz kapsanmadı |
+| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE/ROTATE_SESSION_ONLY/QUARANTINE_PROXY/FULL_RECOVERY'nin hepsi `markFailed`'e, ve başarı yolu `recordSuccess`'e runtime doğrulamalı bağlı (bkz. Kapanan Maddeler Geçmişi); **açık kalma nedeni artık "bağlantı eksik" değil — bu turda bulunan `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` yanlış-telemetri düzeltmesi henüz doğrulanmadı** (kod teslim edildi, `tsc`/runtime sonucu bekleniyor) |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -198,56 +164,41 @@
   tek yol `RecoveryCommandPort` (`setCommandPort` ile enjekte edilen
   `PersistentStateEngine`) oldu. `Promise.allSettled`'ın artık tek bir port
   beklerken hâlâ anlamlı olup olmadığı — runtime doğrulaması sırasında
-  gözden geçirilmeli (dosya içeriği henüz bu session'a yüklenmedi, sadece
-  git diff istatistiği ve tsc sonucu görüldü).
-- **(Yeni — Session 3)** `PersistentStateEngine.handleGovernorDecision`'ın
-  catch bloğundaki `enqueueAnomaly(...)` çağrısı `queueMicrotask(() => ...)`
-  ile ertelendi — senkron re-entrancy zincirinin `isRecovering` guard'ını
-  atlamasını önlemek için (Madde #9 kapsamı). Runtime'da doğrulandı; ayrıntı
-  için yukarıdaki ⚡ ANLIK DURUM. **Bu turda soruldu ama henüz teyit edilmedi:**
-  debug-log'u temizlenmiş sürümün repo'ya fiilen uygulanıp uygulanmadığı
-  (bkz. Cevap Bekleyen Sorular) — teyit gelmeden bu satır "uygulandı" olarak
-  güncellenmeyecek.
-- **(Yeni — Session 3, kullanıcı onaylı)** Madde #9'un gerçek entegrasyon
-  testi (mock'suz Playwright + gerçek/local auth server ile cookie-restore-
-  ama-authenticate-olmadı senaryosu) **projenin sonuna ertelendi**.
-  Gerekçe: gerçek proxy + gerçek `DefaultAuthValidator` hedefine karşı test
-  kurmak şu an için yan iş; ana geliştirme ilerledikçe zaten bir test
-  ortamı (CI/local mock server) oturacak. **Açık varsayım:** "proje sonu"
-  net bir tarih/tetikleyici değil — bu kalemin sessizce sonsuza kadar
-  ertelenmiş kalmaması için ileride "artık test edelim mi" diye tekrar
+  gözden geçirilmeli.
+- `PersistentStateEngine.handleGovernorDecision`'ın catch bloğundaki
+  `enqueueAnomaly(...)` çağrısı `queueMicrotask(() => ...)` ile ertelendi —
+  senkron re-entrancy zincirinin `isRecovering` guard'ını atlamasını
+  önlemek için (Madde #9 kapsamı). Runtime'da doğrulandı; debug-log
+  temizlenmiş sürümün repo'ya uygulandığı hem kullanıcı teyidi hem dosya
+  içeriğiyle doğrulandı.
+- Madde #9'un gerçek entegrasyon testi (mock'suz Playwright + gerçek/local
+  auth server ile cookie-restore-ama-authenticate-olmadı senaryosu)
+  **projenin sonuna ertelendi**. **Açık varsayım:** "proje sonu" net bir
+  tarih/tetikleyici değil — ileride "artık test edelim mi" diye tekrar
   sorulacak.
-- **(Yeni — Session 3)** `getAllMetrics()` (dışa açık/toplu görünüm) ve
-  `getProxyMetrics()` (iç kullanım, gerçek proxy bağlantısı için
-  credential'lı) **kasıtlı olarak farklı davranıyor** — bu ayrım
-  `AdvancedProxyManager.ts` içinde yorumla işaretlendi. Madde #22
-  (telemetry bağlantısı) SADECE `getAllMetrics()`'e bağlanmalı,
-  `getProxyMetrics()`'e ASLA (credential log/telemetriye sızar). Bu kural
-  THROTTLE/ROTATE_SESSION_ONLY köprüsü kapatılırken de korundu.
-- **(Yeni — Session 3)** `EngineFactoryOptions.authValidator` (`validationUrl`,
-  `unauthenticatedUrlPatterns`, `navigationTimeoutMs?`) **ZORUNLU** alan —
-  bilinçli olarak opsiyonel bırakılmadı. Composition root bu değerleri
-  vermeden `EngineFactory.createProductionEngine()` derleme zamanında
-  reddedilir; `DefaultAuthValidator`'ın kendi constructor'ı da aynı alanlar
-  boşsa ayrıca runtime'da throw eder (iki kat güvence, sessiz fallback yasak
-  — Madde 22 disiplini). Demo bloğundaki `validationUrl`/
-  `unauthenticatedUrlPatterns` gerçek panel/login URL'leri DEĞİL, açıkça
-  `// TODO` etiketli placeholder — production'a alınmadan gerçek değerlerle
-  değiştirilmeli.
-- **(Yeni — Session 3)** `DefaultAuthValidator.validate()`: ağ/DNS/timeout
-  hatası (`page.goto()` throw) ve beklenmeyen HTTP yanıtı (`!response.ok()`)
-  artık `AuthValidationNetworkError` (yeni, `auth-validation.types.ts`)
-  fırlatıyor — `false`/`true` SADECE hedef sayfaya gerçekten ulaşılıp
-  `unauthenticatedUrlPatterns` değerlendirilebildiğinde dönüyor. Bu hata,
-  `PersistentStateEngine`'in genel rollback `catch`'i tarafından yakalanıyor
-  ama (kasıtlı olarak) `AuthRestoreFailedError` gibi özel bir
-  `AUTH_VALIDATION_FAILED` anomaly'si TETİKLEMİYOR — ağ hatası, auth hatası
-  değildir. `PersistentStateEngine.ts`'e bu ayrım için ayrıca dokunulmadı.
-- **(Yeni — Session 3)** `IStateObserver.ts`/`IResourceAdapter.ts`, Madde #33
-  kapsamında `legacy/`'den `src/adapters/`'a taşındı (`git mv`, içerik
-  değişmedi) — artık `src/`'in resmi parçası, legacy değil. Bu iki dosya,
-  root-level `AdaptiveGovernor.ts`/`PersistentStateEngine.ts` (Madde #1)
-  taramasında gözden kaçmıştı.
+- `getAllMetrics()` (dışa açık/toplu görünüm) ve `getProxyMetrics()` (iç
+  kullanım, gerçek proxy bağlantısı için credential'lı) **kasıtlı olarak
+  farklı davranıyor**. Madde #22 (telemetry bağlantısı) SADECE
+  `getAllMetrics()`'e bağlanmalı, `getProxyMetrics()`'e ASLA (credential
+  log/telemetriye sızar).
+- `EngineFactoryOptions.authValidator` (`validationUrl`,
+  `unauthenticatedUrlPatterns`, `navigationTimeoutMs?`) **ZORUNLU** alan.
+  Demo bloğundaki placeholder URL'ler production'a alınmadan gerçek
+  değerlerle değiştirilmeli.
+- `DefaultAuthValidator.validate()`: ağ/DNS/timeout hatası ve beklenmeyen
+  HTTP yanıtı `AuthValidationNetworkError` fırlatıyor — bu, (kasıtlı olarak)
+  `AUTH_VALIDATION_FAILED` anomaly'si TETİKLEMİYOR, ağ hatası auth hatası
+  değildir.
+- `IStateObserver.ts`/`IResourceAdapter.ts`, Madde #33 kapsamında
+  `legacy/`'den `src/adapters/`'a taşındı — artık `src/`'in resmi parçası.
+- **(Yeni)** `PersistentStateEngine.handleGovernorDecision`'daki
+  `FULL_RECOVERY` case'i artık `AUTH_VALIDATION_FAILED` anomaly'sini
+  `markFailed`'den hariç tutuyor (bkz. ⚡ ANLIK DURUM) — bu, proxy sağlığı
+  ile session/auth-state sağlığının ayrı katmanlar olduğu ilkesinin
+  `ROTATE_SESSION_ONLY`'den sonra ikinci uygulanışı; gelecekte benzer bir
+  action/anomaly kombinasyonu eklenirse aynı ayrım (anomaly.type'a göre
+  proxy'yi suçlamadan önce "bu gerçekten proxy'nin suçu mu" sorusu)
+  tekrar sorulmalı.
 - Persistent proxy store için backend seçimi henüz kullanıcıya sorulmadı.
 - Secret yönetimi kaynağı (env vs vault) henüz belirlenmedi.
 
@@ -266,11 +217,9 @@
 > **(Yeni — Session 3, Taşıma 3)** SESSION_INDEX.md 400 satır eşiği ikinci
 > kez aşıldı. Bu kez ⚡ ANLIK DURUM'daki Madde #6/#7/#8, #9 alt-bug, #23,
 > #33 alt-adım ve süreç dışı `authValidator` bloklarının TAM METİN
-> kopyaları (bunlar Taşıma 1/2'de Kapanan Maddeler Geçmişi'nden arşive
-> gitmişti ama ANLIK DURUM'daki aynı içerik o taşımalarda gözden kaçmıştı)
-> `session_arşiv.md`'ye (Taşıma 3) eklendi, ekteki `session_arsiv_tasima3.md`
-> dosyasına bakınız — silinmedi, sadece SESSION_INDEX'te kısa özet/referans
-> bırakıldı.
+> kopyaları `session_arşiv.md`'ye (Taşıma 3) eklendi, ekteki
+> `session_arsiv_tasima3.md` dosyasına bakınız — silinmedi, sadece
+> SESSION_INDEX'te kısa özet/referans bırakıldı.
 
 - **Madde #22 — alt-kapsam genişletmesi (THROTTLE + ROTATE_SESSION_ONLY→
   `markFailed` köprüsü, tip-guard dahil) KAPANDI (Session 3, runtime +
@@ -278,23 +227,26 @@
   `THROTTLE` aksiyonu için `markFailed` köprüsü önceki turda kapatılmıştı;
   bu turda `ROTATE_SESSION_ONLY` aksiyonu için aynı köprü + iki aksiyon
   arasında doğru ayrımı yapan bir tip-guard eklendi (`CHALLENGE_DETECTED`
-  gibi diğer aksiyonlarda `markFailed` YANLIŞLIKLA tetiklenmemeli — bu,
-  Test 2'nin yeni regresyon assertion'ının konusu). Doğrulama —
-  `runtime-check` betiğiyle **7/7 PASS, 0 FAIL**:
-  - Test 1 (3 assertion) — ayrıntı bu turda paylaşılmadı, önceki turdan
-    geçerliliğini koruyor olarak kabul edildi.
-  - Test 2 (3 assertion) — `CHALLENGE_DETECTED` action'ında `markFailed`
-    çağrıl**MADIĞI** yeni regresyon assertion'ı ile doğrulandı.
-  - Test 3 (1 assertion) — `markFailed('HTTP_429')` eski aktif proxy'ye
-    doğru uygulandı, `http429Count` 0→1 değişimi doğrulandı.
-  `npx tsc --noEmit` → temiz prompt, **0 hata**.
-  **Sınır:** Madde #22'nin diğer `GovernorAction` türleri (varsa —
-  `FULL_RECOVERY` dahil) için instrumentation bağlantısı bu turda
-  kapsanmadı; madde bu nedenle P0 tablosunda AÇIK kalmaya devam ediyor.
-  **Açık nokta:** Bu turun test/derleme ortamında `ts-node@10.9.2` ile
-  `typescript@^7.0.2` arasında bir uyumsuzluk gözlemlendi (`tsx` ile
-  atlatıldı) — ayrıntı ve genelleştirilebilirlik kararı için aşağıdaki
-  ⚠️ DERSLER bölümüne bakınız.
+  gibi diğer aksiyonlarda `markFailed` YANLIŞLIKLA tetiklenmemeli). Doğrulama
+  — `runtime-check` betiğiyle **7/7 PASS, 0 FAIL**, `npx tsc --noEmit` →
+  temiz, **0 hata**.
+- **(Yeni) Madde #22 — `recordSuccess()` köprüsü KAPANDI (Session 3, runtime
+  doğrulamalı):** `PlaywrightPageObserver`'ın genuinely başarılı (2xx)
+  response'larda emit ettiği `'state'` event'i, `handleObserverState()` ile
+  dinlenip `proxyManager.recordSuccess()`'e bağlanıyor; `latencyMs`
+  sayısal değilse veya negatifse kayıt yapılmıyor (guard). `runtime-check.ts`'e
+  eklenen TEST 4, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI ve PASS etti
+  (4a: geçerli latency ile çağrıldı, 4b: negatif latency ile guard
+  ÇAĞIRMADI) — gerçek komut çıktısı görüldü, "niyet beyanı" aşaması bitti.
+  **Sınır:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
+  hâlâ sadece kod okumasıyla biliniyor.
+- **(Yeni) Madde #22 — "diğer `GovernorAction` türleri kapsanmadı" kaydı
+  DÜZELTİLDİ:** Önceki turlarda P0 tablosuna ve bu bölüme yazılan
+  "THROTTLE/ROTATE_SESSION_ONLY dışındaki türler bağlı değil" iddiası,
+  `PersistentStateEngine.ts`'in tam içeriği görülünce yanlış çıktı —
+  QUARANTINE_PROXY ve FULL_RECOVERY zaten `markFailed`'e bağlıydı (muhtemelen
+  daha önceki, ayrıntısı bu SESSION_INDEX'e hiç yazılmamış bir turda
+  eklenmişti). Ders için bkz. ⚠️ DERSLER.
 
 ---
 
@@ -311,73 +263,53 @@
   yol açar — tam yol istenmeli.
 - Tip tanımı varsayımla yazılan bir dosya her zaman "geçici" sayılmalı.
 - Mobil terminalde `cat` ile uzun dosya okumak güvenilir değil.
-- **(Yeni)** Bir session'ın kapanışında "şunu yapıyorum / şu komutu
-  çalıştırıyorum" şeklinde bildirilen bir eylem, komutun **gerçek çıktısı**
-  paylaşılmadan bir sonraki session'da "doğrulandı" sayılmamalı — niyet
-  beyanı ile gerçekleşmiş sonuç arasındaki fark, tam da bu projenin var
-  olma sebebi olan ayrımdır.
-- **(Yeni — Session 3)** Bir alt-katmanın (guard/re-entrancy) temiz
-  doğrulanması, üst semptomun (auth-validation başarısızlığı) çözüldüğü
-  anlamına gelmez — kapsam daraldıkça madde AÇIK kalmaya devam eder, teşhis
-  bir sonraki katmana taşınır; erken kapanış iddiası yasak.
-- **(Yeni — Session 3)** Bir maddenin kapsamını genişletmek (örn. "aynı
-  dosyada, aynı sızıntıya sahip ikinci bir metod daha var") için gerçek
-  tüketici kodu görülmeden onay istemek riskli — dosya başlığındaki eski
-  bir not güncel gerçeği yansıtmayabilir, genişletme onayı SADECE gerçek
-  kod görüldükten sonra istenmeli. **(Doğrulanan tekrar — bu turda)** aynı
-  kalıp ters yönde de gerçekleşti: `recordSuccess`'in "kapsam dışı" olduğu
-  iddiası da eski bir dosya başlığı notuna dayanıyordu ve yanlıştı — gerçek
-  kod (`handleObserverState`, satır 426/340) görülünce düzeltildi. Ders
-  ikiye katlandı: dosya başlığı notu ne "genişletme" ne de "daraltma"
-  yönünde tek başına yeterli kanıt değildir, her iki yönde de gerçek koda
-  bakılmalı.
-- **(Yeni — Session 3)** Bir hata durumunu (ağ/DNS hatası) başka bir hata
-  durumuyla (gerçek "unauthenticated" pattern eşleşmesi) aynı dönüş
-  değerine (`false`) sıkıştırmak, ikisini birbirinden ayırt edilemez hale
-  getirir — bu, "runtime doğrulaması" adımının kendisi sırasında (yanlışlıkla
-  girilen bir placeholder domain üzerinden) ortaya çıktı; test yanlış
-  sebepten "geçmiş" görünüyordu. Ders: bir testin "geçti" demesi yetmez,
-  NEDEN geçtiği de doğrulanmalı.
-- **(Yeni — Session 3)** Bir dosyayı repo'daki gerçek adından farklı bir
-  isimle (`auth-validation_types.ts` vs gerçek `auth-validation.types.ts`)
-  artifact olarak vermek, kullanıcının onu üzerine yazmak yerine ayrı bir
-  dosya olarak yüklemesine yol açtı — hem `tsc` hem runtime import hatası
-  bu yüzden çıktı. Ders: verilen dosya adı, hedef repo yoluyla nokta/alt
-  çizgi dahil BİREBİR eşleşmeli, ya da hedef yol açıkça belirtilmeli.
-- **(Yeni — Session 3)** Madde #1'in "root-level duplicate dosyalar
-  legacy'ye taşınsın" taraması, aynı riski taşıyan interface/sözleşme
-  dosyalarını (`IStateObserver.ts`, `IResourceAdapter.ts`) yakalamamıştı —
-  bu, yeni bir modül `src/` altına yazılırken sadece "dosyayı nereye
-  yazıyorum" değil, "import ettiğim şey gerçekte nerede duruyor" sorusunun
-  da ayrıca kontrol edilmesi gerektiğini gösterdi; "Madde X kapandı" etiketi
-  benzer riskli dosyaların tamamının tarandığı anlamına gelmez.
-- **(Yeni — Session 3)** Test/derleme aracı sürüm uyumsuzluğu (bu turda:
-  `ts-node@10.9.2` + `typescript@^7.0.2`) çalıştırma zamanında KOD
-  kaynaklıymış gibi görünen bir hataya yol açabilir — kök sebep kodda değil
-  araç/sürüm zincirindeydi, `tsx` ile atlatılınca ortaya çıktı. Ders: bir
-  betik çalıştırma hatası alındığında önce "hangi araç, hangi sürüm"
-  kontrol edilmeli; kod içi teşhise (Kural #1 — tahmin etme) bundan önce
-  geçilmemeli. Bu proje TypeScript/Node tabanlı olduğu için sürüm
-  uyumsuzlukları tekrar edebilir — bu nedenle not projeye genel, tek bir
-  kullanıcının ortamına özgü değil.
-- **(Yeni — Session 3)** "Derleniyor" (`tsc --noEmit` temiz) ile "runtime'da
-  fiilen çağrılıyor" arasındaki fark tek bir maddeye özgü değil, tekrar eden
-  bir kalıp: Madde #22'nin `markFailed` köprüsünde runtime-check ile
-  kapatıldı, `recordSuccess` köprüsünde ise henüz sadece kod-varlığı
-  doğrulandı — aynı maddenin iki alt-kapsamı bile farklı doğrulama
-  seviyelerinde olabilir, "madde #22 çalışıyor" gibi genellemeler yasak;
-  hangi alt-kapsamın hangi seviyede doğrulandığı ayrı ayrı izlenmeli.
+- Bir session'ın kapanışında "şunu yapıyorum / şu komutu çalıştırıyorum"
+  şeklinde bildirilen bir eylem, komutun **gerçek çıktısı** paylaşılmadan
+  bir sonraki session'da "doğrulandı" sayılmamalı.
+- Bir alt-katmanın (guard/re-entrancy) temiz doğrulanması, üst semptomun
+  çözüldüğü anlamına gelmez — kapsam daraldıkça madde AÇIK kalmaya devam
+  eder, erken kapanış iddiası yasak.
+- Bir maddenin kapsamını genişletmek ya da daraltmak için gerçek tüketici
+  kodu görülmeden karar vermek riskli — dosya başlığındaki eski bir not
+  güncel gerçeği yansıtmayabilir, **her iki yönde de** (genişletme VEYA
+  daraltma) gerçek koda bakılmalı. Bu ders SESSION_INDEX'in kendi kayıtları
+  için de geçerli — **(Yeni)** bu turda üçüncü kez doğrulandı: SESSION_INDEX
+  "diğer `GovernorAction` türleri bağlı değil" diye kaydetmişti, gerçek kod
+  görülünce bu da yanlış çıktı (QUARANTINE_PROXY/FULL_RECOVERY zaten
+  bağlıydı). SESSION_INDEX'in kendisi de bir "eski not" kaynağı olabilir —
+  önceki turun kaydı, yeni tur için otomatik doğru kabul edilmemeli.
+- Bir hata durumunu başka bir hata durumuyla aynı dönüş değerine
+  sıkıştırmak, ikisini birbirinden ayırt edilemez hale getirir — bir testin
+  "geçti" demesi yetmez, NEDEN geçtiği de doğrulanmalı.
+- Verilen dosya adı, hedef repo yoluyla nokta/alt çizgi dahil BİREBİR
+  eşleşmeli, ya da hedef yol açıkça belirtilmeli.
+- "Madde X kapandı" etiketi, benzer riskli dosyaların TAMAMININ tarandığı
+  anlamına gelmez — ilgili tüm dosyalar (interface/sözleşme dahil) ayrıca
+  kontrol edilmeli.
+- Test/derleme aracı sürüm uyumsuzluğu, çalıştırma zamanında KOD kaynaklıymış
+  gibi görünen bir hataya yol açabilir — bir betik çalıştırma hatası
+  alındığında önce "hangi araç, hangi sürüm" kontrol edilmeli.
+- "Derleniyor" (`tsc --noEmit` temiz) ile "runtime'da fiilen çağrılıyor"
+  arasındaki fark tekrar eden bir kalıp — aynı maddenin farklı alt-kapsamları
+  farklı doğrulama seviyelerinde olabilir, genellemeler yasak.
+- **(Yeni — Session 3)** Bir action'ın (örn. `FULL_RECOVERY`) birden fazla
+  farklı anomaly tipinden tetiklenebilmesi, o action'ın downstream etkisinin
+  (örn. `markFailed`) TÜM tetikleyici anomaly tiplerine aynı şekilde
+  uygulanması gerektiği anlamına gelmez — `ROTATE_SESSION_ONLY`'de bu ayrım
+  yapılmıştı ama `FULL_RECOVERY`'de yapılmamıştı, kod okunana kadar fark
+  edilmedi. Ders: bir action'ı tetikleyen anomaly tiplerinin listesi
+  değiştiğinde veya yeni bir action/anomaly eşlemesi eklendiğinde, mevcut
+  benzer case'lerdeki guard'ların yeni eşlemeye de uygulanıp uygulanmadığı
+  AYRICA kontrol edilmeli — "bir case'de yapıldı" diğerinde de yapıldığı
+  anlamına gelmez.
 
 ---
 
-*Not (Session 3, `wc -l` ile doğrulandı): Madde #22 alt-kapsam girdisi
-eklenmesiyle dosya önce 400 satır eşiğine yaklaşacaktı (Kural #11); bunu
-önlemek için en eski iki kapanmış girdi (Süreç dışı `authValidator` wiring
-bug'ı + Madde #33 alt-adımı) `session_arşiv.md`'ye (Taşıma 2) TAM olarak
-taşındı — hiçbir şey özetlenmedi/silinmedi, ayrıntı için o dosya.
-SESSION_INDEX.md bu turda `recordSuccess` bulgusu ve iki yeni açık soru
-eklenmesiyle satır sayısı arttı; 400 satır eşiği bu turda AŞILMADI (dosya
-hâlâ eşiğin altında), bu nedenle ek bir arşivleme yapılmadı. Açık maddeler
-(P0/P1/P2) ve anlık durum değişmeden korunuyor; Madde #22 P0 tablosunda
-AÇIK, `recordSuccess` alt-kapsamı için runtime doğrulama yöntemi kullanıcı
-onayı bekliyor.*
+*Not (Session 3, bu tur): `recordSuccess` köprüsünün runtime doğrulaması
+(TEST 4a/4b PASS) ve `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` yanlış-telemetri
+bulgusu + kullanıcı onaylı düzeltmesi eklendi; Madde #22'nin "diğer
+GovernorAction türleri kapsanmadı" kaydı düzeltildi. `FULL_RECOVERY` fix'i
+HENÜZ doğrulanmadı (kod teslim edildi, `tsc`/runtime sonucu bekleniyor) —
+madde #22 bu nedenle P0 tablosunda AÇIK kalmaya devam ediyor. Açık
+maddeler (P0/P1/P2) sayı/kapsam olarak değişmedi, sadece #22'nin açık kalma
+gerekçesi güncellendi.*
