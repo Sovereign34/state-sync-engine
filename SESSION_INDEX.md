@@ -39,49 +39,27 @@
     beyan seviyesinde — dosyanın kendisi bu session'a yüklenmiş VE gerçek
     içeriği görülmüştür (Madde #22'nin `FULL_RECOVERY` bulgusu bu dosyanın
     güncel hâlinden çıkarıldı) — teyit artık dosya içeriğiyle de tutarlı.
-  - **(Yeni) Madde #13 — Credential/state encryption-at-rest: HENÜZ TAM
-    KAPANMADI, kod uygulandı + kısmen doğrulandı.** `SecretProvider`
-    (`src/security/`, env var `STATE_SYNC_ENCRYPTION_KEY` + AES-256-GCM
-    envelope encryption) ve `ProxyCredentialStore` (`src/state/`, SQLite /
-    `better-sqlite3`) eklendi; `AdvancedProxyManager` constructor'ı geriye
-    dönük uyumlu opsiyonel 3. parametre (`credentialStore?`) ile
-    genişletildi. Entegrasyon mantığı: constructor'da önce
-    `credentialStore.loadAll()` ile DB'deki kayıtlar sessizce (DB'ye tekrar
-    yazmadan) map'e yüklenir; `initialProxies` SONRA işlenir —
-    `registerProxy()`'nin var olan "zaten kayıtlıysa dokunma" kuralı
-    (satır 48: `if (!this.proxies.has(server))`) sayesinde DB'deki kayıt
-    config'teki ile çakışırsa DB kazanır, `initialProxies` sadece DB'de
-    olmayanları ekler ve bunlar için tek seferlik DB yazması tetiklenir.
-    **Doğrulama durumu:** `runtime-check-persistence.ts` çalıştırıldı,
-    **4/4 PASS** — (1) env var yokken constructor throw etti (fail-fast),
-    (2) `registerProxy()` iki kez aynı server ile çağrılınca DB'de tek
-    satır kaldı, (3) yanlış key ile `loadAll()` fail-closed oldu, (4)
-    DB'den yüklenen credential doğru kazanıldı (`persisted-user`) — gerçek
-    komut çıktısı ekran görüntüsüyle görüldü. `npx tsc --noEmit` da
-    çalıştırıldı, ekranda hata satırı görünmüyor; **ancak net "0 hata"/
-    `echo $?` teyidi henüz paylaşılmadı** — DERSLER'e göre bu teyit
-    gelmeden derleme adımı "doğrulandı" sayılmıyor, madde bu yüzden
-    P0 tablosunda AÇIK kalmaya devam ediyor.
-    **Açık takip maddeleri (bu turun kapsamı dışı, ayrı [KARAR BİLDİRİMİ]
-    gerektirir):** (a) `package.json`'a `better-sqlite3` +
-    `@types/better-sqlite3` eklenmesi kullanıcı tarafında yapılmalı,
-    görülmedi; (b) gerçek composition-root dosyası (muhtemelen
-    `src/index.ts` veya bir `EngineFactory`) — `credentialStore`'u kimin
-    oluşturup enjekte edeceği (env var okuma, DB path) hâlâ görülmedi.
-    **Güvenlik notu:** Doğrulama sürecinde üretilen bir
-    `STATE_SYNC_ENCRYPTION_KEY` örneği ekran görüntüsünde açığa çıkmıştı —
-    kullanıcıya bu örnek key'i production'a almadan rotate etmesi
-    önerildi (test script kendi geçici key'lerini ürettiği için bu öneri
-    testin geçerliliğini etkilemiyor).
-- **Sıradaki öncelik:** Madde #22 tam kapandığı için P0'da sırada:
-  (a) **#13** — kod uygulaması ve `runtime-check-persistence.ts` 4/4 PASS
-  ile tamamlandı; kapanış için sadece `npx tsc --noEmit` çıktısının net
-  "0 hata" (`echo $?`) teyidi bekleniyor, ardından composition-root
-  entegrasyonu (yukarıda) ayrı bir tur olarak ele alınacak; (b) #9'un
-  ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı kullanıcıdan
-  tekrar sorulacak); (c) #33'ün `crash`/`requestfailed` ham `page.on(...)`
-  kısmı. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓
-  Cevap Bekleyen Sorular).
+  - **(Yeni) Madde #13 — Credential/state encryption-at-rest: TAM KAPANDI
+    (Session 3).** Tam ayrıntı Kapanan Maddeler Geçmişi'nde — özet:
+    `SecretProvider` + `ProxyCredentialStore` entegrasyonu tamamlandı,
+    `runtime-check-persistence.ts` 4/4 PASS, `npx tsc --noEmit; echo
+    "EXIT CODE: $?"` ile **EXIT CODE: 0** ekran görüntüsüyle teyit edildi.
+    Madde P0 tablosundan kaldırıldı. **Kapsam dışı bırakılan açık takip
+    (madde'nin kendisi değil, ayrı görev):** composition-root wiring
+    (`credentialStore`'u kimin oluşturup enjekte edeceği) ve `package.json`'a
+    `better-sqlite3`/`@types/better-sqlite3` eklenmesi hâlâ görülmedi —
+    bkz. Sıradaki Öncelik.
+- **Sıradaki öncelik:** Madde #13 ve #22 kapandığı için P0'da sırada:
+  (a) **#9**'un ertelenmiş gerçek entegrasyon testi (ne zaman ele
+  alınacağı kullanıcıdan tekrar sorulacak); (b) **#33**'ün `crash`/
+  `requestfailed` ham `page.on(...)` kısmı. Ayrıca P0 dışı ama Madde #13'ün
+  fiilen production'da aktif olması için gereken iki açık takip: (c)
+  composition-root dosyasında (muhtemelen `src/index.ts` veya bir
+  `EngineFactory`) `credentialStore`'un oluşturulup enjekte edilmesi —
+  görülmedi, ayrı [KARAR BİLDİRİMİ] gerektirir; (d) `package.json`'a
+  `better-sqlite3` + `@types/better-sqlite3` eklenmesi kullanıcı tarafında
+  yapılmalı. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz.
+  ❓ Cevap Bekleyen Sorular).
 
 ---
 
@@ -101,11 +79,9 @@
 - ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
   uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı** — bu turda
   dosyanın kendisi de görülüp içerik teyidiyle tutarlı bulundu.
-- **(Yeni) Madde #13 — `npx tsc --noEmit` gerçekten 0 hata mı döndü?**
-  Ekran görüntüsünde komut çalıştırılmış ve hata satırı görünmüyor
-  (tsc başarılıysa zaten sessiz çıkar), ama net `echo $?` çıktısı
-  paylaşılmadı. **Kullanıcıdan bu teyit bekleniyor**, gelmeden Madde #13
-  kapatılmayacak.
+- ~~Madde #13 — `npx tsc --noEmit` gerçekten 0 hata mı döndü?~~ —
+  **çözüldü**: `npx tsc --noEmit; echo "EXIT CODE: $?"` çalıştırıldı,
+  ekran görüntüsünde **EXIT CODE: 0** görüldü. Madde #13 bu teyitle kapandı.
 
 ---
 
@@ -114,7 +90,6 @@
 | # | Madde | Katman | Durum |
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
-| 13 | Credential/state encryption-at-rest | state/security | açık — `SecretProvider`+`ProxyCredentialStore` entegrasyonu tamamlandı, `runtime-check-persistence.ts` 4/4 PASS (ekran görüntüsüyle doğrulandı); `npx tsc --noEmit` çalıştırıldı ancak net "0 hata" (`echo $?`) teyidi henüz paylaşılmadı — bu teyit gelmeden madde KAPANMAYACAK; ayrıca `package.json`'a `better-sqlite3` bağımlılığı eklenmesi ve gerçek composition-root'taki (`credentialStore` injection) wiring henüz görülmedi |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -169,8 +144,8 @@
   `ProxyMetrics`/`ProxyLease` import ediyor, ancak yüklenen `index.ts` bu
   ikisini re-export etmiyor (sadece `governor-command.types` ve
   `auth-validation.types`). Madde #13 turunda bu tipe yeni alan eklenmediği
-  için bloklayıcı değil, ama tip dosyasının kendisi hâlâ "görülmedi" sayılıyor
-  — ileride bu tipler değişirse önce görülmesi gerekecek.
+  için bloklayıcı değildi, ama tip dosyasının kendisi hâlâ "görülmedi"
+  sayılıyor — ileride bu tipler değişirse önce görülmesi gerekecek.
 - `GovernorDecisionEvent` ve `RecoveryCommandPort`, `AdaptiveGovernor.ts`'ten
   de re-export ediliyor.
 - Madde #6'da listener hatası `Promise.allSettled` ile izole edilmişti;
@@ -194,7 +169,9 @@
   kullanım, gerçek proxy bağlantısı için credential'lı) **kasıtlı olarak
   farklı davranıyor**. Madde #22 (telemetry bağlantısı) SADECE
   `getAllMetrics()`'e bağlanmalı, `getProxyMetrics()`'e ASLA (credential
-  log/telemetriye sızar).
+  log/telemetriye sızar). **Madde #13 kapsamında da bu ayrım korundu** —
+  `SecretProvider`/`ProxyCredentialStore` credential'ları yalnızca kendi
+  katmanında tutuyor, `AdvancedProxyManager` şifreleme detayını bilmiyor.
 - `EngineFactoryOptions.authValidator` (`validationUrl`,
   `unauthenticatedUrlPatterns`, `navigationTimeoutMs?`) **ZORUNLU** alan.
   Demo bloğundaki placeholder URL'ler production'a alınmadan gerçek
@@ -218,12 +195,13 @@
   istenmiyor; Redis (ek servis) ve Neon/Postgres (network round-trip, serverless
   cold-start riski — özellikle `FULL_RECOVERY` anında ekstra gecikme riski) kullanıcı
   onayıyla elendi.
-- **(Yeni) Madde #13 — Secret yönetimi kaynağı KARARLAŞTIRILDI: env var
+- **Madde #13 — Secret yönetimi kaynağı KARARLAŞTIRILDI ve UYGULANDI: env var
   (`STATE_SYNC_ENCRYPTION_KEY`) + AES-256-GCM envelope encryption, bir
   `SecretProvider` interface'i arkasında** (ileride Vault/KMS'e geçiş için
   dependency-inversion, Madde 33 disiplinine uyumlu). Vault/KMS, operasyonel
-  karmaşıklık gerekçesiyle kullanıcı onayıyla elendi. **(Yeni) Kod uygulaması
-  tamamlandı** — bkz. ⚡ ANLIK DURUM, madde kapanışı `tsc` teyidi bekliyor.
+  karmaşıklık gerekçesiyle kullanıcı onayıyla elendi. **Madde TAM KAPANDI**
+  (bkz. Kapanan Maddeler Geçmişi) — production'da fiilen aktif olması için
+  composition-root wiring'i hâlâ ayrı bir açık takip (bkz. Sıradaki Öncelik).
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume (SQLite dosyası için) + resmi Playwright Docker
   image. Gerekçe: Playwright ağır CPU/RAM + uzun-yaşayan process gerektiriyor,
@@ -265,6 +243,37 @@
   bakmadan HER durumda `markFailed` çağırıyordu; `AUTH_VALIDATION_FAILED`
   (session/auth-state sorunu, proxy'yle ilgisiz) artık hariç tutuluyor —
   düzeltme TEST 5a/5b ile regresyona karşı da doğrulandı.
+- **(Yeni) Madde #13 — Credential/state encryption-at-rest TAM KAPANDI
+  (Session 3), P0 tablosundan kaldırıldı:** `SecretProvider`
+  (`src/security/`, env var `STATE_SYNC_ENCRYPTION_KEY` + AES-256-GCM
+  envelope encryption) ve `ProxyCredentialStore` (`src/state/`, SQLite /
+  `better-sqlite3`) eklendi; `AdvancedProxyManager` constructor'ı geriye
+  dönük uyumlu opsiyonel 3. parametre (`credentialStore?`) ile
+  genişletildi. Entegrasyon: constructor'da önce `credentialStore.loadAll()`
+  ile DB'deki kayıtlar sessizce (DB'ye tekrar yazmadan) map'e yüklenir;
+  `initialProxies` SONRA işlenir — `registerProxy()`'nin var olan "zaten
+  kayıtlıysa dokunma" kuralı sayesinde DB'deki kayıt config'teki ile
+  çakışırsa DB kazanır, `initialProxies` sadece DB'de olmayanları ekler ve
+  bunlar için tek seferlik DB yazması tetiklenir. **Doğrulama:**
+  `runtime-check-persistence.ts` ile **4/4 PASS** — (1) env var yokken
+  constructor throw etti (fail-fast), (2) `registerProxy()` iki kez aynı
+  server ile çağrılınca DB'de tek satır kaldı, (3) yanlış key ile
+  `loadAll()` fail-closed oldu, (4) DB'den yüklenen credential doğru
+  kazanıldı (`persisted-user`) — gerçek komut çıktısı ekran görüntüsüyle
+  görüldü. Derleme: `npx tsc --noEmit; echo "EXIT CODE: $?"` çalıştırıldı,
+  ekran görüntüsünde **EXIT CODE: 0** görüldü — "hata satırı yok" ile
+  "gerçekten 0 döndü" arasındaki fark bu şekilde kapatıldı. **Güvenlik
+  notu:** Doğrulama sürecinde üretilen bir `STATE_SYNC_ENCRYPTION_KEY`
+  örneği bir ekran görüntüsünde açığa çıkmıştı, kullanıcıya bu örnek key'i
+  production'a almadan rotate etmesi önerildi (test script kendi geçici
+  key'lerini ürettiği için testin geçerliliğini etkilemiyor). **Kapsam
+  dışı bırakılan açık takip (madde'nin kendisi kapandı, ama bu ikisi
+  ayrı görev olarak devam ediyor):** (a) `package.json`'a
+  `better-sqlite3` + `@types/better-sqlite3` eklenmesi kullanıcı tarafında
+  yapılmalı, görülmedi; (b) gerçek composition-root dosyası (muhtemelen
+  `src/index.ts` veya bir `EngineFactory`) — `credentialStore`'u kimin
+  oluşturup enjekte edeceği (env var okuma, DB path) hâlâ görülmedi, ayrı
+  bir [KARAR BİLDİRİMİ] gerektirir.
 
 ---
 
@@ -319,16 +328,22 @@
   bir action/anomaly eşlemesi eklendiğinde, mevcut benzer case'lerdeki
   guard'ların yeni eşlemeye de uygulanıp uygulanmadığı AYRICA kontrol
   edilmeli — "bir case'de yapıldı" diğerinde de yapıldığı anlamına gelmez.
-- **(Yeni — Madde #13 turu)** "Terminalde hata satırı görünmüyor" ile
-  "komut gerçekten 0 (başarı) döndü" farklı doğrulama seviyeleridir —
-  `tsc` başarılıysa sessiz çıkar, ama ekran kaydırılmış/kesilmiş olabilir;
-  net `echo $?` (veya eşdeğeri) görülmeden derleme adımı "temiz" olarak
-  kapatılmamalı.
-- **(Yeni — Madde #13 turu)** Bir doğrulama ekran görüntüsünde, üretilen
-  gerçek bir secret/key değeri (örn. `openssl rand` çıktısı) açıkta
-  görünüyorsa, bu değerin artık sohbet geçmişinde ifşa olduğu kabul edilip
-  production'a alınmadan rotate edilmesi önerilmeli — script'in kendi
-  test-amaçlı geçici key'leri kullanması bu öneriyi geçersiz kılmaz.
+- **(Madde #13 turu)** "Terminalde hata satırı görünmüyor" ile "komut
+  gerçekten 0 (başarı) döndü" farklı doğrulama seviyeleridir — `tsc`
+  başarılıysa sessiz çıkar, ama ekran kaydırılmış/kesilmiş olabilir; net
+  `echo $?` (veya eşdeğeri) görülmeden derleme adımı "temiz" olarak
+  kapatılmamalı. **Bu turda fiilen uygulandı:** `echo "EXIT CODE: $?"`
+  istendi, `EXIT CODE: 0` görülünce madde kapatıldı.
+- **(Madde #13 turu)** Bir doğrulama ekran görüntüsünde, üretilen gerçek
+  bir secret/key değeri (örn. `openssl rand` çıktısı) açıkta görünüyorsa,
+  bu değerin artık sohbet geçmişinde ifşa olduğu kabul edilip production'a
+  alınmadan rotate edilmesi önerilmeli — script'in kendi test-amaçlı
+  geçici key'leri kullanması bu öneriyi geçersiz kılmaz.
+- **(Yeni — Madde #13 turu)** Bir madde ("kod uygulandı + runtime testleri
+  geçti") kapansa bile, o kodun **production'da fiilen kullanılması**
+  (composition-root wiring, bağımlılık kurulumu) ayrı ve hâlâ açık bir
+  takip maddesi olabilir — "madde kapandı" ile "özellik production'da
+  aktif" birbirine karıştırılmamalı, ikisi ayrı satırlarda takip edilmeli.
 
 ---
 
@@ -339,9 +354,10 @@ alt-kapsamıydı. **Madde #22 bu turda TAM KAPANDI ve P0 tablosundan
 kaldırıldı.***
 
 *Not (Session 3, bu tur): `SecretProvider` + `ProxyCredentialStore` ile
-Madde #13'ün kod uygulaması tamamlandı, `runtime-check-persistence.ts`
-4/4 PASS ile runtime doğrulandı (ekran görüntüsü). `npx tsc --noEmit`
-çalıştırıldı ancak net "0 hata" teyidi (`echo $?`) henüz paylaşılmadı —
-**Madde #13 bu yüzden HÂLÂ AÇIK**, P0 tablosunda kalıyor. Açık P0 maddeleri
-artık: #9, #13, #33 (3 madde, değişmedi — #22 önceki turda zaten
-kaldırılmıştı). P1/P2 sayı/kapsam olarak değişmedi.*
+Madde #13'ün derleme adımı `npx tsc --noEmit; echo "EXIT CODE: $?"` →
+**EXIT CODE: 0** ile teyit edildi (ekran görüntüsü). **Madde #13 bu turda
+TAM KAPANDI ve P0 tablosundan kaldırıldı.** Açık P0 maddeleri artık: **#9,
+#33** (2 madde, önceki turda 3'tü). Composition-root wiring ve
+`better-sqlite3` bağımlılığı, madde #13'ün kendisi kapanmış olsa da ayrı
+açık takip olarak Sıradaki Öncelik'te kayıtlı. P1/P2 sayı/kapsam olarak
+değişmedi.*
