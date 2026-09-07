@@ -26,68 +26,62 @@
     (Taşıma 3) — madde'nin kendisi kapanmadı.
   - **Süreç dışı `authValidator` wiring bug'ı — TAM KAPANDI.** Tam ayrıntı
     `session_arşiv.md`'de (Taşıma 2/3).
-  - **Madde #22 — alt-kapsam (THROTTLE + ROTATE_SESSION_ONLY→`markFailed`
-    köprüsü, tip-guard dahil): KAPANDI (Session 3, runtime + derleme
-    doğrulaması).** Ayrıntı için Kapanan Maddeler Geçmişi. `runtime-check`
-    betiğiyle 7/7 test PASS; `npx tsc --noEmit` → 0 hata.
-  - **(Yeni) Madde #22 — `recordSuccess` köprüsü: KAPANDI (Session 3,
-    runtime doğrulamalı).** `npx tsx runtime-check.ts` gerçek komut çıktısı
-    paylaşıldı (ekran görüntüsü) — TEST 4a PASS (geçerli `latencyMs`=123 ile
-    `recordSuccess(proxy-5, 123)` doğru çağrıldı), TEST 4b PASS (negatif
-    `latencyMs`=-5 ile `recordSuccess` çağrılMADI, guard doğru çalışıyor).
-    Önceki turların TEST 1-3'ü de aynı çalıştırmada PASS. **Sınır aynen
-    geçerli:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
-    hâlâ sadece kod okumasıyla biliniyor, runtime'da ayrıca doğrulanmadı.
-  - **(Yeni) Madde #22 — "diğer `GovernorAction` türleri için instrumentation
-    bağlantısı kapsanmadı" iddiası YANLIŞTI, kayıt düzeltildi.**
-    `PersistentStateEngine.ts` (`handleGovernorDecision`) gerçek kod
-    okunarak doğrulandı: THROTTLE, QUARANTINE_PROXY, ROTATE_SESSION_ONLY,
-    FULL_RECOVERY case'lerinin HEPSİ zaten `markFailed`'e bağlıydı
-    (`if (this.currentLease) { ... }` deseniyle) — bu turdan önce de
-    kodda mevcuttu. `NO_ACTION` kasıtlı olarak bağlı değil. Bu, daha önce
-    `recordSuccess` için yaşanan "dosya başlığındaki eski not güncel
-    gerçeği yansıtmıyordu" kalıbının bir tekrarı (bkz. ⚠️ DERSLER).
-  - **(Yeni) Madde #22 — kod okuması sırasında YENİ bir bulgu: `FULL_RECOVERY`
-    case'i anomaly tipine bakmadan HER durumda `markFailed(proxyId,
-    'NETWORK_FAIL')` çağırıyordu.** `FULL_RECOVERY`, üç farklı anomaly
-    tipinden tetiklenebiliyor (`PAGE_CRASH`, `NETWORK_FAILURE`,
-    `AUTH_VALIDATION_FAILED`) — son ikisi proxy'yle ilgisiz olabilir,
-    özellikle `AUTH_VALIDATION_FAILED` tamamen session-state sorunu, proxy
-    sağlıklı olabilir. Bu, `ROTATE_SESSION_ONLY` case'inde zaten uygulanmış
-    disiplinin (HTTP_429 vs CHALLENGE_DETECTED type-guard'ı) `FULL_RECOVERY`'ye
-    uygulanmamış hâli — sağlıklı proxy'ler gereksiz yere 45sn karantinaya
-    giriyordu (yanlış telemetri, Madde 22 disiplini ihlali).
-    **[KARAR BİLDİRİMİ] kullanıcı onaylandı ve UYGULANDI:** `FULL_RECOVERY`
-    case'i artık `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED`
-    koşuluyla sınırlı — `AUTH_VALIDATION_FAILED` artık `markFailed`'den
-    hariç tutuluyor. **Durum: KAPANDI (Session 3).** `npx tsc --noEmit` →
-    temiz, 0 hata (ekran görüntüsü). Ardından `runtime-check.ts`'e TEST 5
-    eklendi (5a: `NETWORK_FAILURE` → `markFailed('NETWORK_FAIL')` HÂLÂ
-    çağrılıyor — guard fazla geniş değil; 5b: `AUTH_VALIDATION_FAILED` →
-    `markFailed` HİÇ ÇAĞRILMIYOR — asıl bulgunun regresyon testi),
-    `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI, 5a/5b ikisi de PASS
-    (ekran görüntüsü, gerçek komut çıktısı görüldü).
-  - **(Yeni) Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3).**
-    THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY → hepsi
-    doğru tip-guard'larla `markFailed`'e bağlı; başarı yolu `recordSuccess`'e
-    guard'lı bağlı. Tamamı `runtime-check.ts` (TEST 1-5, hepsi PASS) ve
-    `npx tsc --noEmit` (0 hata) ile runtime + derleme seviyesinde doğrulandı.
-    Madde P0 tablosundan kaldırıldı, ayrıntı Kapanan Maddeler Geçmişi'nde.
+  - **Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3).** Tam
+    ayrıntı `session_arşiv.md`'de (Taşıma 4) — özet: THROTTLE,
+    ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY → hepsi doğru
+    tip-guard'larla `markFailed`'e bağlı; başarı yolu `recordSuccess`'e
+    guard'lı bağlı. `runtime-check.ts` (TEST 1-5, hepsi PASS) ve
+    `npx tsc --noEmit` (0 hata) ile runtime + derleme seviyesinde
+    doğrulandı. Madde P0 tablosundan kaldırıldı.
   - **(Yeni) `PersistentStateEngine.ts` debug-temiz sürüm: kullanıcı
     tarafından repo'ya uygulandığı TEYİT EDİLDİ** (debug `console.log`
     temizliği onaylanmış, kod son haline getirilmiş). Not: bu teyit sözlü
     beyan seviyesinde — dosyanın kendisi bu session'a yüklenmiş VE gerçek
-    içeriği görülmüştür (yukarıdaki `FULL_RECOVERY` bulgusu bu dosyanın
+    içeriği görülmüştür (Madde #22'nin `FULL_RECOVERY` bulgusu bu dosyanın
     güncel hâlinden çıkarıldı) — teyit artık dosya içeriğiyle de tutarlı.
-  - Madde #13: Session 2'den değişmedi.
-- **Sıradaki öncelik:** Madde #22 kapandığı için P0'da sırada: (a) #13
-  credential/state encryption-at-rest — secret kaynağı (env var + AES-256-GCM)
-  ve persistence backend'i (SQLite) kullanıcıyla KARARLAŞTIRILDI (bkz. 📌
-  Kritik Teknik Kararlar), ancak kod üretimi için `ProxyCredential` tip
-  tanımı ve `AdvancedProxyManager.ts` HÂLÂ BEKLENİYOR (Kural #2, eksik
-  veriyle çözüm üretilmez); (b) #9'un ertelenmiş gerçek entegrasyon testi
-  (ne zaman ele alınacağı kullanıcıdan tekrar sorulacak). Ayrıca hâlâ açık:
-  #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap Bekleyen Sorular).
+  - **(Yeni) Madde #13 — Credential/state encryption-at-rest: HENÜZ TAM
+    KAPANMADI, kod uygulandı + kısmen doğrulandı.** `SecretProvider`
+    (`src/security/`, env var `STATE_SYNC_ENCRYPTION_KEY` + AES-256-GCM
+    envelope encryption) ve `ProxyCredentialStore` (`src/state/`, SQLite /
+    `better-sqlite3`) eklendi; `AdvancedProxyManager` constructor'ı geriye
+    dönük uyumlu opsiyonel 3. parametre (`credentialStore?`) ile
+    genişletildi. Entegrasyon mantığı: constructor'da önce
+    `credentialStore.loadAll()` ile DB'deki kayıtlar sessizce (DB'ye tekrar
+    yazmadan) map'e yüklenir; `initialProxies` SONRA işlenir —
+    `registerProxy()`'nin var olan "zaten kayıtlıysa dokunma" kuralı
+    (satır 48: `if (!this.proxies.has(server))`) sayesinde DB'deki kayıt
+    config'teki ile çakışırsa DB kazanır, `initialProxies` sadece DB'de
+    olmayanları ekler ve bunlar için tek seferlik DB yazması tetiklenir.
+    **Doğrulama durumu:** `runtime-check-persistence.ts` çalıştırıldı,
+    **4/4 PASS** — (1) env var yokken constructor throw etti (fail-fast),
+    (2) `registerProxy()` iki kez aynı server ile çağrılınca DB'de tek
+    satır kaldı, (3) yanlış key ile `loadAll()` fail-closed oldu, (4)
+    DB'den yüklenen credential doğru kazanıldı (`persisted-user`) — gerçek
+    komut çıktısı ekran görüntüsüyle görüldü. `npx tsc --noEmit` da
+    çalıştırıldı, ekranda hata satırı görünmüyor; **ancak net "0 hata"/
+    `echo $?` teyidi henüz paylaşılmadı** — DERSLER'e göre bu teyit
+    gelmeden derleme adımı "doğrulandı" sayılmıyor, madde bu yüzden
+    P0 tablosunda AÇIK kalmaya devam ediyor.
+    **Açık takip maddeleri (bu turun kapsamı dışı, ayrı [KARAR BİLDİRİMİ]
+    gerektirir):** (a) `package.json`'a `better-sqlite3` +
+    `@types/better-sqlite3` eklenmesi kullanıcı tarafında yapılmalı,
+    görülmedi; (b) gerçek composition-root dosyası (muhtemelen
+    `src/index.ts` veya bir `EngineFactory`) — `credentialStore`'u kimin
+    oluşturup enjekte edeceği (env var okuma, DB path) hâlâ görülmedi.
+    **Güvenlik notu:** Doğrulama sürecinde üretilen bir
+    `STATE_SYNC_ENCRYPTION_KEY` örneği ekran görüntüsünde açığa çıkmıştı —
+    kullanıcıya bu örnek key'i production'a almadan rotate etmesi
+    önerildi (test script kendi geçici key'lerini ürettiği için bu öneri
+    testin geçerliliğini etkilemiyor).
+- **Sıradaki öncelik:** Madde #22 tam kapandığı için P0'da sırada:
+  (a) **#13** — kod uygulaması ve `runtime-check-persistence.ts` 4/4 PASS
+  ile tamamlandı; kapanış için sadece `npx tsc --noEmit` çıktısının net
+  "0 hata" (`echo $?`) teyidi bekleniyor, ardından composition-root
+  entegrasyonu (yukarıda) ayrı bir tur olarak ele alınacak; (b) #9'un
+  ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı kullanıcıdan
+  tekrar sorulacak); (c) #33'ün `crash`/`requestfailed` ham `page.on(...)`
+  kısmı. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓
+  Cevap Bekleyen Sorular).
 
 ---
 
@@ -107,6 +101,11 @@
 - ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
   uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı** — bu turda
   dosyanın kendisi de görülüp içerik teyidiyle tutarlı bulundu.
+- **(Yeni) Madde #13 — `npx tsc --noEmit` gerçekten 0 hata mı döndü?**
+  Ekran görüntüsünde komut çalıştırılmış ve hata satırı görünmüyor
+  (tsc başarılıysa zaten sessiz çıkar), ama net `echo $?` çıktısı
+  paylaşılmadı. **Kullanıcıdan bu teyit bekleniyor**, gelmeden Madde #13
+  kapatılmayacak.
 
 ---
 
@@ -115,7 +114,7 @@
 | # | Madde | Katman | Durum |
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
-| 13 | Credential/state encryption-at-rest | state/security | açık |
+| 13 | Credential/state encryption-at-rest | state/security | açık — `SecretProvider`+`ProxyCredentialStore` entegrasyonu tamamlandı, `runtime-check-persistence.ts` 4/4 PASS (ekran görüntüsüyle doğrulandı); `npx tsc --noEmit` çalıştırıldı ancak net "0 hata" (`echo $?`) teyidi henüz paylaşılmadı — bu teyit gelmeden madde KAPANMAYACAK; ayrıca `package.json`'a `better-sqlite3` bağımlılığı eklenmesi ve gerçek composition-root'taki (`credentialStore` injection) wiring henüz görülmedi |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -166,6 +165,12 @@
   ProxyMetrics/PreservedSessionState/GovernorDecisionEvent/RecoveryCommandPort)
   TEK merkezi kaynağı `src/types/governor-command.types.ts`.**
   `src/types/index.ts` bunu re-export eder; production entrypoint `src/index.ts`'tir.
+  **(Yeni not — henüz görülmedi)** `AdvancedProxyManager.ts`, `'../types'`'tan
+  `ProxyMetrics`/`ProxyLease` import ediyor, ancak yüklenen `index.ts` bu
+  ikisini re-export etmiyor (sadece `governor-command.types` ve
+  `auth-validation.types`). Madde #13 turunda bu tipe yeni alan eklenmediği
+  için bloklayıcı değil, ama tip dosyasının kendisi hâlâ "görülmedi" sayılıyor
+  — ileride bu tipler değişirse önce görülmesi gerekecek.
 - `GovernorDecisionEvent` ve `RecoveryCommandPort`, `AdaptiveGovernor.ts`'ten
   de re-export ediliyor.
 - Madde #6'da listener hatası `Promise.allSettled` ile izole edilmişti;
@@ -202,11 +207,11 @@
   `legacy/`'den `src/adapters/`'a taşındı — artık `src/`'in resmi parçası.
 - **(Yeni)** `PersistentStateEngine.handleGovernorDecision`'daki
   `FULL_RECOVERY` case'i artık `AUTH_VALIDATION_FAILED` anomaly'sini
-  `markFailed`'den hariç tutuyor (bkz. ⚡ ANLIK DURUM) — bu, proxy sağlığı
-  ile session/auth-state sağlığının ayrı katmanlar olduğu ilkesinin
-  `ROTATE_SESSION_ONLY`'den sonra ikinci uygulanışı; gelecekte benzer bir
-  action/anomaly kombinasyonu eklenirse aynı ayrım (anomaly.type'a göre
-  proxy'yi suçlamadan önce "bu gerçekten proxy'nin suçu mu" sorusu)
+  `markFailed`'den hariç tutuyor (bkz. `session_arşiv.md` Taşıma 4) — bu,
+  proxy sağlığı ile session/auth-state sağlığının ayrı katmanlar olduğu
+  ilkesinin `ROTATE_SESSION_ONLY`'den sonra ikinci uygulanışı; gelecekte
+  benzer bir action/anomaly kombinasyonu eklenirse aynı ayrım (anomaly.type'a
+  göre proxy'yi suçlamadan önce "bu gerçekten proxy'nin suçu mu" sorusu)
   tekrar sorulmalı.
 - **(Yeni) Madde #2 — Persistent proxy store backend KARARLAŞTIRILDI: SQLite**
   (`better-sqlite3`). Gerekçe: tek-node motor, ekstra servis/network bağımlılığı
@@ -217,7 +222,8 @@
   (`STATE_SYNC_ENCRYPTION_KEY`) + AES-256-GCM envelope encryption, bir
   `SecretProvider` interface'i arkasında** (ileride Vault/KMS'e geçiş için
   dependency-inversion, Madde 33 disiplinine uyumlu). Vault/KMS, operasyonel
-  karmaşıklık gerekçesiyle kullanıcı onayıyla elendi.
+  karmaşıklık gerekçesiyle kullanıcı onayıyla elendi. **(Yeni) Kod uygulaması
+  tamamlandı** — bkz. ⚡ ANLIK DURUM, madde kapanışı `tsc` teyidi bekliyor.
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume (SQLite dosyası için) + resmi Playwright Docker
   image. Gerekçe: Playwright ağır CPU/RAM + uzun-yaşayan process gerektiriyor,
@@ -244,52 +250,21 @@
 > kopyaları `session_arşiv.md`'ye (Taşıma 3) eklendi, ekteki
 > `session_arsiv_tasima3.md` dosyasına bakınız — silinmedi, sadece
 > SESSION_INDEX'te kısa özet/referans bırakıldı.
+> **(Yeni — Session 3, Taşıma 4)** Madde #22 TAM KAPANDIĞI için ⚡ ANLIK
+> DURUM'daki ve bu bölümdeki tüm Madde #22 girdilerinin TAM METİN kopyaları
+> `session_arşiv.md`'ye (Taşıma 4) eklendi, `TASIMA_4.md` dosyasına bakınız
+> — silinmedi, sadece SESSION_INDEX'te kısa özet/referans bırakıldı.
 
-- **Madde #22 — alt-kapsam genişletmesi (THROTTLE + ROTATE_SESSION_ONLY→
-  `markFailed` köprüsü, tip-guard dahil) KAPANDI (Session 3, runtime +
-  derleme doğrulaması; madde'nin kendisi P0 tablosunda AÇIK kalıyor):**
-  `THROTTLE` aksiyonu için `markFailed` köprüsü önceki turda kapatılmıştı;
-  bu turda `ROTATE_SESSION_ONLY` aksiyonu için aynı köprü + iki aksiyon
-  arasında doğru ayrımı yapan bir tip-guard eklendi (`CHALLENGE_DETECTED`
-  gibi diğer aksiyonlarda `markFailed` YANLIŞLIKLA tetiklenmemeli). Doğrulama
-  — `runtime-check` betiğiyle **7/7 PASS, 0 FAIL**, `npx tsc --noEmit` →
-  temiz, **0 hata**.
-- **(Yeni) Madde #22 — `recordSuccess()` köprüsü KAPANDI (Session 3, runtime
-  doğrulamalı):** `PlaywrightPageObserver`'ın genuinely başarılı (2xx)
-  response'larda emit ettiği `'state'` event'i, `handleObserverState()` ile
-  dinlenip `proxyManager.recordSuccess()`'e bağlanıyor; `latencyMs`
-  sayısal değilse veya negatifse kayıt yapılmıyor (guard). `runtime-check.ts`'e
-  eklenen TEST 4, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI ve PASS etti
-  (4a: geçerli latency ile çağrıldı, 4b: negatif latency ile guard
-  ÇAĞIRMADI) — gerçek komut çıktısı görüldü, "niyet beyanı" aşaması bitti.
-  **Sınır:** `!this.currentLease` dalı bu script'te kasıtlı kapsam dışı,
-  hâlâ sadece kod okumasıyla biliniyor.
-- **(Yeni) Madde #22 — "diğer `GovernorAction` türleri kapsanmadı" kaydı
-  DÜZELTİLDİ:** Önceki turlarda P0 tablosuna ve bu bölüme yazılan
-  "THROTTLE/ROTATE_SESSION_ONLY dışındaki türler bağlı değil" iddiası,
-  `PersistentStateEngine.ts`'in tam içeriği görülünce yanlış çıktı —
-  QUARANTINE_PROXY ve FULL_RECOVERY zaten `markFailed`'e bağlıydı (muhtemelen
-  daha önceki, ayrıntısı bu SESSION_INDEX'e hiç yazılmamış bir turda
-  eklenmişti). Ders için bkz. ⚠️ DERSLER.
-- **(Yeni) Madde #22 — TAM KAPANDI (Session 3), P0 tablosundan kaldırıldı:**
-  Son açık alt-kapsam olan `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
-  tip-guard'ı doğrulandı. Bulgu: `FULL_RECOVERY` case'i anomaly tipine
-  bakmadan HER durumda `markFailed('NETWORK_FAIL')` çağırıyordu; ancak
-  `FULL_RECOVERY` üç farklı anomaly tipinden tetiklenebiliyor (`PAGE_CRASH`,
-  `NETWORK_FAILURE`, `AUTH_VALIDATION_FAILED`) ve sonuncusu proxy'yle
-  ilgisiz (tamamen session/auth-state sorunu) — sağlıklı proxy'ler
-  gereksiz yere karantinaya giriyordu. Düzeltme: case artık
-  `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED` koşuluyla
-  sınırlı. Doğrulama: `npx tsc --noEmit` → 0 hata; `runtime-check.ts`'e
-  eklenen TEST 5, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI — 5a PASS
-  (`NETWORK_FAILURE` hâlâ `markFailed` tetikliyor, guard fazla geniş
-  değil), 5b PASS (`AUTH_VALIDATION_FAILED` artık `markFailed`
-  tetiklemiyor, asıl bulgunun regresyonu). `PAGE_CRASH` yolu (ham
-  `page.on('crash')`) bu testte kasıtlı kapsam dışı bırakıldı — Madde #33
-  kapsamında ayrıca ele alınacak. Sonuç: Madde #22'nin TÜM alt-kapsamları
-  (THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY →
-  `markFailed`; başarı yolu → `recordSuccess`) runtime + derleme
-  seviyesinde doğrulandı, madde P0 tablosundan kaldırıldı.
+- **Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3), P0
+  tablosundan kaldırıldı.** Tam ayrıntı `session_arşiv.md`'de (Taşıma 4) —
+  özet: THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY →
+  hepsi doğru tip-guard'larla `markFailed`'e bağlı; başarı yolu
+  `recordSuccess`'e guard'lı bağlı. `runtime-check.ts` (TEST 1-5, hepsi
+  PASS) ve `npx tsc --noEmit` (0 hata) ile runtime + derleme seviyesinde
+  doğrulandı. Son kapanan alt-bulgu: `FULL_RECOVERY` case'i anomaly tipine
+  bakmadan HER durumda `markFailed` çağırıyordu; `AUTH_VALIDATION_FAILED`
+  (session/auth-state sorunu, proxy'yle ilgisiz) artık hariç tutuluyor —
+  düzeltme TEST 5a/5b ile regresyona karşı da doğrulandı.
 
 ---
 
@@ -316,7 +291,7 @@
   kodu görülmeden karar vermek riskli — dosya başlığındaki eski bir not
   güncel gerçeği yansıtmayabilir, **her iki yönde de** (genişletme VEYA
   daraltma) gerçek koda bakılmalı. Bu ders SESSION_INDEX'in kendi kayıtları
-  için de geçerli — **(Yeni)** bu turda üçüncü kez doğrulandı: SESSION_INDEX
+  için de geçerli — bu turda üçüncü kez doğrulandı: SESSION_INDEX
   "diğer `GovernorAction` türleri bağlı değil" diye kaydetmişti, gerçek kod
   görülünce bu da yanlış çıktı (QUARANTINE_PROXY/FULL_RECOVERY zaten
   bağlıydı). SESSION_INDEX'in kendisi de bir "eski not" kaynağı olabilir —
@@ -335,22 +310,38 @@
 - "Derleniyor" (`tsc --noEmit` temiz) ile "runtime'da fiilen çağrılıyor"
   arasındaki fark tekrar eden bir kalıp — aynı maddenin farklı alt-kapsamları
   farklı doğrulama seviyelerinde olabilir, genellemeler yasak.
-- **(Yeni — Session 3)** Bir action'ın (örn. `FULL_RECOVERY`) birden fazla
-  farklı anomaly tipinden tetiklenebilmesi, o action'ın downstream etkisinin
-  (örn. `markFailed`) TÜM tetikleyici anomaly tiplerine aynı şekilde
-  uygulanması gerektiği anlamına gelmez — `ROTATE_SESSION_ONLY`'de bu ayrım
-  yapılmıştı ama `FULL_RECOVERY`'de yapılmamıştı, kod okunana kadar fark
-  edilmedi. Ders: bir action'ı tetikleyen anomaly tiplerinin listesi
-  değiştiğinde veya yeni bir action/anomaly eşlemesi eklendiğinde, mevcut
-  benzer case'lerdeki guard'ların yeni eşlemeye de uygulanıp uygulanmadığı
-  AYRICA kontrol edilmeli — "bir case'de yapıldı" diğerinde de yapıldığı
-  anlamına gelmez.
+- Bir action'ın (örn. `FULL_RECOVERY`) birden fazla farklı anomaly tipinden
+  tetiklenebilmesi, o action'ın downstream etkisinin (örn. `markFailed`)
+  TÜM tetikleyici anomaly tiplerine aynı şekilde uygulanması gerektiği
+  anlamına gelmez — `ROTATE_SESSION_ONLY`'de bu ayrım yapılmıştı ama
+  `FULL_RECOVERY`'de yapılmamıştı, kod okunana kadar fark edilmedi. Ders:
+  bir action'ı tetikleyen anomaly tiplerinin listesi değiştiğinde veya yeni
+  bir action/anomaly eşlemesi eklendiğinde, mevcut benzer case'lerdeki
+  guard'ların yeni eşlemeye de uygulanıp uygulanmadığı AYRICA kontrol
+  edilmeli — "bir case'de yapıldı" diğerinde de yapıldığı anlamına gelmez.
+- **(Yeni — Madde #13 turu)** "Terminalde hata satırı görünmüyor" ile
+  "komut gerçekten 0 (başarı) döndü" farklı doğrulama seviyeleridir —
+  `tsc` başarılıysa sessiz çıkar, ama ekran kaydırılmış/kesilmiş olabilir;
+  net `echo $?` (veya eşdeğeri) görülmeden derleme adımı "temiz" olarak
+  kapatılmamalı.
+- **(Yeni — Madde #13 turu)** Bir doğrulama ekran görüntüsünde, üretilen
+  gerçek bir secret/key değeri (örn. `openssl rand` çıktısı) açıkta
+  görünüyorsa, bu değerin artık sohbet geçmişinde ifşa olduğu kabul edilip
+  production'a alınmadan rotate edilmesi önerilmeli — script'in kendi
+  test-amaçlı geçici key'leri kullanması bu öneriyi geçersiz kılmaz.
 
 ---
 
-*Not (Session 3, bu tur): `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
+*Not (Session 3, önceki tur): `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
 tip-guard'ı TEST 5a/5b ile runtime doğrulandı (`npx tsx runtime-check.ts`,
 ikisi de PASS) ve `npx tsc --noEmit` temiz — bu, Madde #22'nin son açık
 alt-kapsamıydı. **Madde #22 bu turda TAM KAPANDI ve P0 tablosundan
-kaldırıldı.** Açık P0 maddeleri artık: #9, #13, #33 (3 madde, önceki
-turda 4'tü). P1/P2 sayı/kapsam olarak değişmedi.*
+kaldırıldı.***
+
+*Not (Session 3, bu tur): `SecretProvider` + `ProxyCredentialStore` ile
+Madde #13'ün kod uygulaması tamamlandı, `runtime-check-persistence.ts`
+4/4 PASS ile runtime doğrulandı (ekran görüntüsü). `npx tsc --noEmit`
+çalıştırıldı ancak net "0 hata" teyidi (`echo $?`) henüz paylaşılmadı —
+**Madde #13 bu yüzden HÂLÂ AÇIK**, P0 tablosunda kalıyor. Açık P0 maddeleri
+artık: #9, #13, #33 (3 madde, değişmedi — #22 önceki turda zaten
+kaldırılmıştı). P1/P2 sayı/kapsam olarak değişmedi.*
