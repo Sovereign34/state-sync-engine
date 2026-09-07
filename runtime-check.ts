@@ -47,6 +47,23 @@
 //       mantığı; `PlaywrightPageObserver`'ın gerçek bir Page'den bu şekle
 //       uygun payload üretip üretmediği AYRI bir doğrulama konusu (Madde
 //       #33 kapsamı) — bu betik onu KAPSAMIYOR.
+//   (f) (BU TUR) Yeni TEST 5: Madde #22 FULL_RECOVERY/AUTH_VALIDATION_FAILED
+//       tip-guard'ı. `PersistentStateEngine.ts`'teki FULL_RECOVERY case'i
+//       artık `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED`
+//       koşuluyla sınırlı — bu, ROTATE_SESSION_ONLY'deki HTTP_429 tip-guard'ının
+//       (bkz. (d)) FULL_RECOVERY'ye ikinci uygulanışı. TEST 5a, guard'ın fazla
+//       geniş OLMADIĞINI kanıtlar (NETWORK_FAILURE hâlâ proxy'yi işaretler);
+//       TEST 5b, asıl bulgunun regresyon testidir (AUTH_VALIDATION_FAILED
+//       artık markFailed'i TETİKLEMEZ). AÇIK VARSAYIM: NETWORK_FAILURE ve
+//       AUTH_VALIDATION_FAILED'in ikisinin de AdaptiveGovernor.evaluatePolicy()
+//       içinde FULL_RECOVERY'ye eşlendiği bu betikte DOĞRUDAN doğrulanmıyor —
+//       bu, önceki bir turda gerçek kod okumasıyla teyit edilmiş bir bilgi
+//       (bkz. SESSION_INDEX.md); bu betik sadece o eşlemenin SONUCUNDAKİ
+//       markFailed davranışını test ediyor. PAGE_CRASH -> FULL_RECOVERY yolu
+//       (üçüncü tetikleyici) bu testte KAPSANMADI (page.on('crash') ham
+//       Playwright event'i, bu betikte mock'lanan governor.enqueueAnomaly
+//       akışının dışında — kapsam dışı bırakıldı, TEST 4'teki PlaywrightPageObserver
+//       sınırıyla aynı gerekçe).
 //
 // Çalıştırma (repo kökünden):
 //   npx ts-node --transpile-only runtime-check.ts
@@ -373,10 +390,59 @@ async function main(): Promise<void> {
   // "handleObserverState no-op çalışıyor" iddiasının bir parçası DEĞİL —
   // sadece kod okumasıyla (satır 427) biliniyor, runtime'da doğrulanmadı.
 
+  // ============ TEST 5 — Madde #22 (FULL_RECOVERY -> markFailed, AUTH_VALIDATION_FAILED tip-guard'ı) ============
+  console.log("\n=== TEST 5: FULL_RECOVERY'yi tetikleyen anomaly tipine göre markFailed guard'ı ===");
+
+  // 5a — NETWORK_FAILURE (gerçekten proxy kaynaklı olabilir) -> markFailed('NETWORK_FAIL')
+  // ÇAĞRILMALI. Bu, guard'ın fazla geniş OLMADIĞININ kanıtı — sadece
+  // AUTH_VALIDATION_FAILED hariç tutuluyor, diğer FULL_RECOVERY tetikleyicileri
+  // (NETWORK_FAILURE, PAGE_CRASH) hâlâ proxy'yi işaretlemeli.
+  const activeProxyIdBeforeTest5a = getActiveProxyId();
+  const markFailedCallsBeforeTest5a = markFailedCalls.length;
+
+  governor.enqueueAnomaly({
+    id: 'a-full-recovery-network', type: AnomalyType.NETWORK_FAILURE, scope: AnomalyScope.INFRASTRUCTURE, timestamp: Date.now(),
+  });
+
+  await waitUntilIdle(governor);
+
+  const relevantMarkFailedCalls5a = markFailedCalls.slice(markFailedCallsBeforeTest5a);
+  const calledOnOldProxy5a = relevantMarkFailedCalls5a.some(
+    (c) => c.proxyId === activeProxyIdBeforeTest5a && c.reason === 'NETWORK_FAIL'
+  );
+
+  if (calledOnOldProxy5a) {
+    pass(`NETWORK_FAILURE -> FULL_RECOVERY: markFailed('NETWORK_FAIL') ESKİ (aktif) proxy'ye (${activeProxyIdBeforeTest5a}) uygulandı — guard fazla geniş DEĞİL, proxy kaynaklı olabilecek anomaly hâlâ işaretleniyor`);
+  } else {
+    fail(`NETWORK_FAILURE -> FULL_RECOVERY'de markFailed('NETWORK_FAIL') beklenen proxy'ye (${activeProxyIdBeforeTest5a}) uygulanmadı — guard yanlışlıkla fazla geniş olabilir: ${JSON.stringify(relevantMarkFailedCalls5a)}`);
+  }
+
+  // 5b — AUTH_VALIDATION_FAILED (proxy'yle ilgisiz, session/auth-state sorunu)
+  // -> markFailed HİÇ ÇAĞRILMAMALI. Asıl bulgunun regresyon testi: bu guard
+  // olmadan yazılan önceki hâlde, sağlıklı bir proxy AUTH_VALIDATION_FAILED
+  // sonrası yanlışlıkla karantinaya giriyordu (yanlış telemetri, Madde 22
+  // disiplini ihlali).
+  const activeProxyIdBeforeTest5b = getActiveProxyId();
+  const markFailedCallsBeforeTest5b = markFailedCalls.length;
+
+  governor.enqueueAnomaly({
+    id: 'a-full-recovery-auth', type: AnomalyType.AUTH_VALIDATION_FAILED, scope: AnomalyScope.SESSION, timestamp: Date.now(),
+  });
+
+  await waitUntilIdle(governor);
+
+  const relevantMarkFailedCalls5b = markFailedCalls.slice(markFailedCallsBeforeTest5b);
+
+  if (relevantMarkFailedCalls5b.length === 0) {
+    pass(`AUTH_VALIDATION_FAILED -> FULL_RECOVERY: markFailed HİÇ ÇAĞRILMADI — sağlıklı proxy (${activeProxyIdBeforeTest5b}) yanlışlıkla karantinaya girmedi (Madde #22 FULL_RECOVERY/AUTH_VALIDATION_FAILED fix'i doğrulandı)`);
+  } else {
+    fail(`AUTH_VALIDATION_FAILED -> FULL_RECOVERY'de markFailed YANLIŞLIKLA ${relevantMarkFailedCalls5b.length} kez çağrıldı: ${JSON.stringify(relevantMarkFailedCalls5b)}`);
+  }
+
   // ============ SONUÇ ============
   console.log('\n=== SONUÇ ===');
   if (failures === 0) {
-    console.log('✅ Tüm testler geçti — Madde #6/#7/#8, #22 (THROTTLE+ROTATE_SESSION_ONLY→markFailed köprüsü, tip-guard dahil) VE #22 recordSuccess() köprüsü (guard dahil) bu senaryolar altında runtime doğrulandı.');
+    console.log('✅ Tüm testler geçti — Madde #6/#7/#8, #22 (THROTTLE+ROTATE_SESSION_ONLY→markFailed köprüsü, tip-guard dahil), #22 recordSuccess() köprüsü (guard dahil) VE #22 FULL_RECOVERY/AUTH_VALIDATION_FAILED tip-guard\'ı bu senaryolar altında runtime doğrulandı.');
   } else {
     console.log(`❌ ${failures} test başarısız — ilgili maddeyi P0'da açık tutun, koda bakılmalı.`);
     process.exitCode = 1;
