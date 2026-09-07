@@ -60,10 +60,19 @@
     **[KARAR BİLDİRİMİ] kullanıcı onaylandı ve UYGULANDI:** `FULL_RECOVERY`
     case'i artık `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED`
     koşuluyla sınırlı — `AUTH_VALIDATION_FAILED` artık `markFailed`'den
-    hariç tutuluyor. **Durum: kod üretildi, tam dosya (`PersistentStateEngine.ts`)
-    kullanıcıya teslim edildi, HENÜZ `tsc --noEmit`/runtime ile
-    doğrulanmadı** — gerçek çıktı gelmeden bu düzeltme "doğrulandı"
-    sayılmayacak (⚠️ DERSLER — niyet/sonuç ayrımı).
+    hariç tutuluyor. **Durum: KAPANDI (Session 3).** `npx tsc --noEmit` →
+    temiz, 0 hata (ekran görüntüsü). Ardından `runtime-check.ts`'e TEST 5
+    eklendi (5a: `NETWORK_FAILURE` → `markFailed('NETWORK_FAIL')` HÂLÂ
+    çağrılıyor — guard fazla geniş değil; 5b: `AUTH_VALIDATION_FAILED` →
+    `markFailed` HİÇ ÇAĞRILMIYOR — asıl bulgunun regresyon testi),
+    `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI, 5a/5b ikisi de PASS
+    (ekran görüntüsü, gerçek komut çıktısı görüldü).
+  - **(Yeni) Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3).**
+    THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY → hepsi
+    doğru tip-guard'larla `markFailed`'e bağlı; başarı yolu `recordSuccess`'e
+    guard'lı bağlı. Tamamı `runtime-check.ts` (TEST 1-5, hepsi PASS) ve
+    `npx tsc --noEmit` (0 hata) ile runtime + derleme seviyesinde doğrulandı.
+    Madde P0 tablosundan kaldırıldı, ayrıntı Kapanan Maddeler Geçmişi'nde.
   - **(Yeni) `PersistentStateEngine.ts` debug-temiz sürüm: kullanıcı
     tarafından repo'ya uygulandığı TEYİT EDİLDİ** (debug `console.log`
     temizliği onaylanmış, kod son haline getirilmiş). Not: bu teyit sözlü
@@ -71,13 +80,11 @@
     içeriği görülmüştür (yukarıdaki `FULL_RECOVERY` bulgusu bu dosyanın
     güncel hâlinden çıkarıldı) — teyit artık dosya içeriğiyle de tutarlı.
   - Madde #13: Session 2'den değişmedi.
-- **Sıradaki öncelik:** `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi
-  için `npx tsc --noEmit` + (mümkünse) `runtime-check.ts`'e yeni bir
-  regresyon testi (mevcut desende: `AUTH_VALIDATION_FAILED` anomaly'siyle
-  `FULL_RECOVERY` tetiklendiğinde `markFailed` çağrılMADIĞINI doğrulayan)
-  sonucu bekleniyor. Bu kapandıktan sonra: (a) #13 credential encryption,
-  (b) #9'un ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı
-  kullanıcıdan tekrar sorulacak, bkz. 📌 Kritik Teknik Kararlar).
+- **Sıradaki öncelik:** Madde #22 kapandığı için P0'da sırada: (a) #13
+  credential/state encryption-at-rest (henüz hiç ele alınmadı), (b) #9'un
+  ertelenmiş gerçek entegrasyon testi (ne zaman ele alınacağı kullanıcıdan
+  tekrar sorulacak, bkz. 📌 Kritik Teknik Kararlar). Ayrıca hâlâ açık:
+  #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap Bekleyen Sorular).
 
 ---
 
@@ -90,10 +97,10 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
-- **(Yeni) `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi doğrulama
-  yöntemi:** `tsc --noEmit` yeterli mi, yoksa `runtime-check.ts`'e yeni bir
-  TEST 5 (AUTH_VALIDATION_FAILED anomaly'siyle FULL_RECOVERY'de markFailed
-  çağrılMADIĞını doğrulayan) mı eklensin? **Kullanıcıdan yanıt bekleniyor.**
+- ~~`FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi doğrulama yöntemi:
+  `tsc --noEmit` yeterli mi, yoksa TEST 5 mi eklensin?~~ — **fiilen
+  TEST 5 eklenerek çözüldü**: hem `tsc --noEmit` (0 hata) hem
+  `runtime-check.ts` TEST 5a/5b (PASS) ile doğrulandı, madde #22 kapandı.
 - ~~`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
   uygulandı mı?~~ — **kullanıcı teyit etti: evet, uygulandı** — bu turda
   dosyanın kendisi de görülüp içerik teyidiyle tutarlı bulundu.
@@ -106,7 +113,6 @@
 |---|---|---|---|
 | 9 | State restore validation (cookie≠authenticated) | state | açık — re-entrancy alt-bug'ı (guard'ın senkron zincirle atlanması) `queueMicrotask` fix'i ile giderildi ve mock runtime testinde tam doğrulandı (ikinci gizli hata yok, grep ile teyit edildi); **gerçek entegrasyon testi (mock'suz Playwright/proxy/DefaultAuthValidator) kullanıcı kararıyla projenin sonuna ertelendi** — madde bu nedenle açık kalıyor, şu an aktif çalışılmıyor |
 | 13 | Credential/state encryption-at-rest | state/security | açık |
-| 22 | Network telemetry → ProxyMetrics instrumentation bağlantısı | network | açık — THROTTLE/ROTATE_SESSION_ONLY/QUARANTINE_PROXY/FULL_RECOVERY'nin hepsi `markFailed`'e, ve başarı yolu `recordSuccess`'e runtime doğrulamalı bağlı (bkz. Kapanan Maddeler Geçmişi); **açık kalma nedeni artık "bağlantı eksik" değil — bu turda bulunan `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` yanlış-telemetri düzeltmesi henüz doğrulanmadı** (kod teslim edildi, `tsc`/runtime sonucu bekleniyor) |
 | 33 | IResourceAdapter/IStateObserver merkezi kullanımı | adapters | açık — legacy→`src/adapters/` taşıması ve `PlaywrightPageObserver` (429/403) wiring'i TAMAMLANDI (bkz. Kapanan Maddeler Geçmişi); `crash`/`requestfailed` hâlâ ham `page.on(...)` — bilinçli olarak ayrı bir tura bırakıldı; `RecoveryCommandPort` bu sözleşmelerle çakışmıyor (ikisi de gözlem odaklı, port karar-iletim odaklı) |
 
 ## 🟡 AÇIK MADDELER — P1
@@ -247,6 +253,25 @@
   QUARANTINE_PROXY ve FULL_RECOVERY zaten `markFailed`'e bağlıydı (muhtemelen
   daha önceki, ayrıntısı bu SESSION_INDEX'e hiç yazılmamış bir turda
   eklenmişti). Ders için bkz. ⚠️ DERSLER.
+- **(Yeni) Madde #22 — TAM KAPANDI (Session 3), P0 tablosundan kaldırıldı:**
+  Son açık alt-kapsam olan `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
+  tip-guard'ı doğrulandı. Bulgu: `FULL_RECOVERY` case'i anomaly tipine
+  bakmadan HER durumda `markFailed('NETWORK_FAIL')` çağırıyordu; ancak
+  `FULL_RECOVERY` üç farklı anomaly tipinden tetiklenebiliyor (`PAGE_CRASH`,
+  `NETWORK_FAILURE`, `AUTH_VALIDATION_FAILED`) ve sonuncusu proxy'yle
+  ilgisiz (tamamen session/auth-state sorunu) — sağlıklı proxy'ler
+  gereksiz yere karantinaya giriyordu. Düzeltme: case artık
+  `event.anomaly.type !== AnomalyType.AUTH_VALIDATION_FAILED` koşuluyla
+  sınırlı. Doğrulama: `npx tsc --noEmit` → 0 hata; `runtime-check.ts`'e
+  eklenen TEST 5, `npx tsx runtime-check.ts` ile ÇALIŞTIRILDI — 5a PASS
+  (`NETWORK_FAILURE` hâlâ `markFailed` tetikliyor, guard fazla geniş
+  değil), 5b PASS (`AUTH_VALIDATION_FAILED` artık `markFailed`
+  tetiklemiyor, asıl bulgunun regresyonu). `PAGE_CRASH` yolu (ham
+  `page.on('crash')`) bu testte kasıtlı kapsam dışı bırakıldı — Madde #33
+  kapsamında ayrıca ele alınacak. Sonuç: Madde #22'nin TÜM alt-kapsamları
+  (THROTTLE, ROTATE_SESSION_ONLY, QUARANTINE_PROXY, FULL_RECOVERY →
+  `markFailed`; başarı yolu → `recordSuccess`) runtime + derleme
+  seviyesinde doğrulandı, madde P0 tablosundan kaldırıldı.
 
 ---
 
@@ -305,11 +330,9 @@
 
 ---
 
-*Not (Session 3, bu tur): `recordSuccess` köprüsünün runtime doğrulaması
-(TEST 4a/4b PASS) ve `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` yanlış-telemetri
-bulgusu + kullanıcı onaylı düzeltmesi eklendi; Madde #22'nin "diğer
-GovernorAction türleri kapsanmadı" kaydı düzeltildi. `FULL_RECOVERY` fix'i
-HENÜZ doğrulanmadı (kod teslim edildi, `tsc`/runtime sonucu bekleniyor) —
-madde #22 bu nedenle P0 tablosunda AÇIK kalmaya devam ediyor. Açık
-maddeler (P0/P1/P2) sayı/kapsam olarak değişmedi, sadece #22'nin açık kalma
-gerekçesi güncellendi.*
+*Not (Session 3, bu tur): `FULL_RECOVERY`/`AUTH_VALIDATION_FAILED`
+tip-guard'ı TEST 5a/5b ile runtime doğrulandı (`npx tsx runtime-check.ts`,
+ikisi de PASS) ve `npx tsc --noEmit` temiz — bu, Madde #22'nin son açık
+alt-kapsamıydı. **Madde #22 bu turda TAM KAPANDI ve P0 tablosundan
+kaldırıldı.** Açık P0 maddeleri artık: #9, #13, #33 (3 madde, önceki
+turda 4'tü). P1/P2 sayı/kapsam olarak değişmedi.*
