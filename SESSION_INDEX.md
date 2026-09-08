@@ -55,16 +55,31 @@
     rawError/sourceUrl doğru taşınıyor, filtre dışı hata emit edilmiyor,
     `stop()` sonrası dinleme kesiliyor), `npx tsc --noEmit; echo "EXIT
     CODE: $?"` → **EXIT CODE: 0**. Madde P0 tablosundan kaldırıldı.
-- **Sıradaki öncelik:** Madde #13, #22, #33 kapandığı için **P0 tablosu artık
-  fiilen boş** — kalan tek P0 maddesi olan **#9**'un gerçek entegrasyon testi
-  kullanıcı kararıyla ertelenmiş durumda, aktif çalışılmıyor. Bu nedenle
-  sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un ertelenmiş testine
-  şimdi mi dönülsün; (b) P1'den bir madde mi seçilsin (öneri: **#2**
-  Persistent proxy state — backend kararı zaten SQLite olarak verildi, kod
-  tarafı henüz yazılmadı); (c) Madde #13'ün kapsam dışı bırakılan açık
-  takipleri mi ele alınsın — composition-root wiring ve `better-sqlite3`
-  bağımlılığı. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz.
-  ❓ Cevap Bekleyen Sorular).
+  - **(Yeni) Madde #2 — Persistent proxy state: TAM KAPANDI (Session 3).**
+    Tam ayrıntı Kapanan Maddeler Geçmişi'nde — özet: yeni `ProxyHealthStore`
+    (`src/state/ProxyHealthStore.ts`) proxy health/quarantine alanlarını
+    credential store ile aynı DB dosyasında ayrı `proxy_health` tablosunda
+    kalıcı hale getiriyor; yazma sadece `markFailed()` içinde `quarantineUntil`
+    güncellendiği anda tetikleniyor (write-through değil), TTL = 24 saat
+    (kullanıcı onayıyla sabitlendi). Doğrulama: `runtime-check-health.js`
+    ile **6/6 PASS** (runtime) + `npx tsc --noEmit` → **EXIT CODE: 0**
+    (derleme) ekran görüntüleriyle teyit edildi. Madde P1 tablosundan
+    kaldırıldı. **Housekeeping (kullanıcı onayıyla):** derlenmiş
+    `runtime-check-health.js` repo kökünden silindi (diğer
+    `runtime-check-*` dosyaları gibi yalnızca `.ts` kaynağı kalıyor).
+- **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — gerçek
+  entegrasyon testi kullanıcı kararıyla ertelenmiş, aktif çalışılmıyor.
+  Fiilen P0'da aktif iş yok. Madde #2'nin kapanmasıyla P1'den seçim
+  daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un ertelenmiş
+  testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi seçilsin (öneri:
+  **#15** Structured logging — Madde #2 turunda zaten `console.error` ile
+  JSON formatlı stopgap kullanıldı, tam katman hâlâ yok — ya da **#24**
+  Engine lifecycle); (c) Madde #13'ün kapsam dışı bırakılan açık takipleri
+  mi ele alınsın — composition-root wiring ve `better-sqlite3` bağımlılığı
+  (bu ihtiyaç artık Madde #2/`ProxyHealthStore` için de aynı composition-root
+  noktasında geçerli, aynı `dbPath` sorusu iki madde için de hâlâ açık).
+  Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap
+  Bekleyen Sorular).
 
 ---
 
@@ -89,6 +104,9 @@
   AnomalyType genişletilecek mi?~~ — **çözüldü**: kullanıcı onayıyla
   `PROCESS_CRASHED`/`NETWORK_ERROR` eklendi, `runtime-check-observer.ts`
   6/6 PASS + `EXIT CODE: 0` ile doğrulandı.
+- ~~Madde #2 — TTL süresi (24 saat) production için uygun mu, housekeeping
+  (`runtime-check-health.js`) silinsin mi?~~ — **kullanıcı onayladı**: TTL
+  24 saat sabitlendi, dosya silindi.
 
 ---
 
@@ -102,7 +120,6 @@
 
 | # | Madde | Katman |
 |---|---|---|
-| 2 | Persistent proxy state (Redis/SQLite/PG) | network |
 | 10 | State kapsamı genişletme (IndexedDB/Cache/SW) | state |
 | 11 | Multi-origin state izolasyonu | state |
 | 12 | State versioning / migration (StateEnvelope) | state |
@@ -195,9 +212,16 @@
   `FULL_RECOVERY` case'i `AUTH_VALIDATION_FAILED` anomaly'sini `markFailed`'den
   hariç tutuyor (bkz. `session_arşiv.md` Taşıma 4) — proxy sağlığı ile
   session/auth-state sağlığının ayrı katmanlar olduğu ilkesi.
-- **(Yeni) Madde #2 — Persistent proxy store backend KARARLAŞTIRILDI: SQLite**
-  (`better-sqlite3`). Gerekçe: tek-node motor, ekstra servis/network bağımlılığı
-  istenmiyor; Redis ve Neon/Postgres kullanıcı onayıyla elendi.
+- **Madde #2 — Persistent proxy store backend KARARLAŞTIRILDI ve UYGULANDI:
+  SQLite (`better-sqlite3`), `ProxyCredentialStore` ile aynı DB dosyası,
+  ayrı `proxy_health` tablosu.** Gerekçe: tek-node motor, ekstra
+  servis/network bağımlılığı istenmiyor; Redis ve Neon/Postgres kullanıcı
+  onayıyla elendi. **Madde TAM KAPANDI** — TTL = 24 saat kullanıcı onayıyla
+  sabitlendi; yazma `markFailed()` içinde best-effort (try/catch + JSON
+  `console.error`, throw edilmez, in-memory state etkilenmez). **Kapsam
+  dışı bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
+  kullanılacağı hâlâ görülmedi — Madde #13'ün aynı türden açık takibiyle
+  birleşiyor, ikisi de aynı composition-root noktasında çözülecek.
 - **Madde #13 — Secret yönetimi kaynağı KARARLAŞTIRILDI ve UYGULANDI: env var
   (`STATE_SYNC_ENCRYPTION_KEY`) + AES-256-GCM envelope encryption, bir
   `SecretProvider` interface'i arkasında.** **Madde TAM KAPANDI** — production'da
@@ -281,6 +305,38 @@
   dinlenmiyor. `npx tsc --noEmit; echo "EXIT CODE: $?"` → **EXIT CODE: 0**.
   Madde #33 bu turda TAM KAPANDI — `attachLifecycleObservers()`'da artık
   hiçbir ham Playwright event'i kalmadı.
+- **(Yeni) Madde #2 — Persistent proxy state TAM KAPANDI (Session 3), P1
+  tablosundan kaldırıldı:** yeni `ProxyHealthStore`
+  (`src/state/ProxyHealthStore.ts`) proxy health/quarantine alanlarını
+  (`latencyMs, dnsFailures, tlsFailures, http403Count, http429Count,
+  successCount, failureCount, lastUsed, quarantineUntil`) SQLite'a kalıcı
+  hale getiriyor — `ProxyCredentialStore` ile **aynı DB dosyası, ayrı
+  `proxy_health` tablosu** (Madde #13'ün turundaki credential
+  entegrasyonuyla birebir simetrik desen). Yazma **SADECE**
+  `AdvancedProxyManager.markFailed()` içinde `quarantineUntil` güncellendiği
+  anda tetikleniyor (write-through değil — bilinçli karar, ara başarı
+  güncellemeleri restart'a kadar yalnızca bellekte kalıyor, `successCount`
+  restart sonrası bir miktar "geride" kalabilir — kabul edilen trade-off).
+  `AdvancedProxyManager` constructor'ına opsiyonel 4. parametre
+  (`healthStore?: ProxyHealthStore`) eklendi; credential `loadAll()`'dan
+  SONRA, `initialProxies` işlenmeden ÖNCE health verisi yüklenir ve **TTL
+  kontrolünden** geçirilir — TTL aşılmışsa sayaçlar/karantina bellekte
+  sıfır kabul edilir, TTL içindeyse aynen uygulanır. **TTL = 24 saat,
+  kullanıcı onayıyla sabitlendi.** Yazma hatası **best-effort**: try/catch
+  + structured JSON `console.error`, throw edilmez, in-memory state
+  etkilenmez (Madde #15 tam telemetry katmanı henüz yok — bu geçici/uyumlu
+  bir stopgap). **Doğrulama:** `runtime-check-health.js` ile **6/6 PASS**
+  (save()+loadAll() round trip; TTL süresi geçmiş kayıt hariç tutulur;
+  restart sonrası health hydration doğru çalışır; orphan health kaydı yeni
+  proxy yaratmaz; `recordSuccess()` persist tetiklemez, `markFailed()`
+  tetikler; DB yazma hatası `markFailed()`'i kırmaz), `npx tsc --noEmit;
+  echo "EXIT CODE: $?"` → **EXIT CODE: 0**. **Housekeeping (kullanıcı
+  onayıyla):** derlenmiş `runtime-check-health.js` repo kökünden silindi —
+  diğer `runtime-check-*` dosyaları gibi yalnızca `.ts` kaynağı kalıyor.
+  **Kapsam dışı bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
+  kullanılacağı hâlâ görülmedi — Madde #13'ün zaten açık olan kapsam-dışı
+  takibiyle aynı nokta, iki madde artık aynı composition-root çözümünü
+  bekliyor.
 
 ---
 
@@ -342,18 +398,29 @@
   kasıtlı taşınmadı" notu, madde tam kapanınca güncellenmesi gereken bir
   notun kendisi hâline geldi; kapanış notları sadece SESSION_INDEX'te değil,
   ilgili kod dosyasının kendi başlığında da güncellenmeli.
+- **(Yeni — Madde #2 turu)** Write-through olmayan (yalnızca belirli bir
+  olayda tetiklenen) bir persistence kararı, "hangi alanların ne zaman
+  güncel olduğu" konusunda kalıcı bir trade-off yaratır — bu, madde
+  kapanışında sadece test PASS olarak değil, açıkça kabul edilmiş bir
+  sınırlama olarak not düşülmeli, aksi halde ileride "bug" sanılabilir.
+- **(Yeni — Madde #2 turu)** Aynı composition-root açık takibi (`dbPath`
+  kimin tarafından enjekte edileceği) birden fazla maddede tekrar
+  ediyorsa, bu maddeler kapandıkça tek tek "hâlâ görülmedi" diye tekrar
+  tekrar not düşmek yerine, composition-root'un kendisi ayrı bir P1/P0
+  madde adayı olarak değerlendirilmeli.
 
 ---
 
-*Not (Session 3, önceki tur): `SecretProvider` + `ProxyCredentialStore` ile
-Madde #13'ün derleme adımı `EXIT CODE: 0` ile teyit edildi. **Madde #13 TAM
-KAPANDI.** Açık P0: #9, #33 (2 madde).*
-
-*Not (Session 3, bu tur): `crash`/`requestfailed` `IStateObserver`
+*Not (Session 3, önceki tur): `crash`/`requestfailed` `IStateObserver`
 sözleşmesine taşındı (`PROCESS_CRASHED`/`NETWORK_ERROR` eklenerek),
 `runtime-check-observer.ts` 6/6 PASS + `EXIT CODE: 0` ile doğrulandı.
-**Madde #33 TAM KAPANDI ve P0 tablosundan kaldırıldı.** P0 tablosunda artık
-sadece **#9** kalıyor — o da kullanıcı kararıyla ertelenmiş, aktif
-çalışılmıyor. Fiilen P0'da aktif iş yok; sıradaki adım kullanıcının
-tercihine bağlı (bkz. Sıradaki Öncelik). P1/P2 sayı/kapsam olarak
-değişmedi.*
+**Madde #33 TAM KAPANDI ve P0 tablosundan kaldırıldı.***
+
+*Not (Session 3, bu tur): `ProxyHealthStore` ile Madde #2 (persistent proxy
+state) kapatıldı — `runtime-check-health.js` 6/6 PASS + `tsc --noEmit`
+EXIT CODE: 0 ile doğrulandı, TTL=24 saat ve housekeeping (dosya silme)
+kullanıcı tarafından onaylandı. **Madde #2 TAM KAPANDI ve P1 tablosundan
+kaldırıldı.** P0 tablosunda hâlâ sadece **#9** kalıyor — kullanıcı
+kararıyla ertelenmiş, aktif çalışılmıyor. Fiilen P0'da aktif iş yok;
+sıradaki adım kullanıcının tercihine bağlı (bkz. Sıradaki Öncelik). P2
+sayı/kapsam olarak değişmedi.*
