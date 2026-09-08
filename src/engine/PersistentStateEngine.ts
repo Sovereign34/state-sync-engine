@@ -65,14 +65,16 @@
 // (Madde #22 — BU TUR) attachLifecycleObservers(): PlaywrightPageObserver'ın
 //          'state' event'i handleObserverState() ile dinlenip
 //          proxyManager.recordSuccess()'e bağlandı — bkz. handleObserverState.
-// (Madde #33 — ilk adım, önceki tur) attachLifecycleObservers(): 429/403 tespiti
-//          artık ham page.on('response', ...) DEĞİL, IStateObserver sözleşmesini
-//          implement eden PlaywrightPageObserver (adapters/PlaywrightPageObserver.ts)
-//          üzerinden geliyor. Bu metod artık ham Playwright event'ini görmüyor,
-//          sadece AnomalyPayload → SemanticAnomaly ÇEVİRİSİNİ yapıyor
-//          (translateObserverAnomaly). crash/requestfailed BİLİNÇLİ OLARAK
-//          taşınmadı — bkz. PlaywrightPageObserver.ts başlığı (IStateObserver'ın
-//          AnomalyType'ında bu ikisi için lossless karşılık yok).
+// (Madde #33 — TAM KAPANIŞ, bu tur) attachLifecycleObservers(): 429/403'ten
+//          sonra crash/requestfailed de artık ham `page.on(...)` DEĞİL,
+//          IStateObserver sözleşmesini implement eden PlaywrightPageObserver
+//          üzerinden geliyor (bkz. PlaywrightPageObserver.ts'in bu turki
+//          değişikliği — IStateObserver.AnomalyType'a jenerik
+//          `PROCESS_CRASHED`/`NETWORK_ERROR` eklendi, KARAR BİLDİRİMİ ile
+//          onaylandı). Bu metod artık HİÇBİR ham Playwright event'i
+//          görmüyor — sadece AnomalyPayload → SemanticAnomaly ÇEVİRİSİNİ
+//          yapıyor (translateObserverAnomaly, bu tur iki yeni case ile
+//          genişletildi). Madde #33 bu turda TAM KAPANDI.
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
@@ -331,49 +333,32 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   }
 
   private attachLifecycleObservers(page: Page): void {
-    // Madde #33 (ilk adım): 429/403 artık ham page.on('response', ...)
-    // yerine IStateObserver sözleşmesi üzerinden geliyor — bu metod artık
-    // ham Playwright event'ini görmüyor, sadece çeviriyi yapıyor.
+    // Madde #33 (TAM KAPANIŞ): 429/403/crash/requestfailed artık HİÇBİRİ
+    // ham page.on(...) DEĞİL — tamamı IStateObserver sözleşmesi üzerinden,
+    // PlaywrightPageObserver (adapters/PlaywrightPageObserver.ts) aracılığıyla
+    // geliyor. Bu metod artık hiçbir ham Playwright event'ini görmüyor,
+    // sadece AnomalyPayload → SemanticAnomaly çevirisini yapıyor
+    // (translateObserverAnomaly).
     const observer = new PlaywrightPageObserver(page);
     observer.on('anomaly', (payload) => this.translateObserverAnomaly(payload));
-    // Madde #22 (BU TUR): recordSuccess() köprüsü — bkz. handleObserverState().
+    // Madde #22: recordSuccess() köprüsü — bkz. handleObserverState().
     observer.on('state', (payload) => this.handleObserverState(payload));
     observer.start();
-
-    // BİLİNÇLİ OLARAK TAŞINMADI (bkz. PlaywrightPageObserver.ts başlığı):
-    // IStateObserver.AnomalyType'ta 'crash' ve DNS/network hatası için
-    // lossless bir karşılık yok — bu iki sinyal hâlâ ham Playwright event'i
-    // olarak, doğrudan enqueueAnomaly() çağırıyor.
-    page.on('crash', () => {
-      this.governor.enqueueAnomaly({
-        id: Math.random().toString(36).substring(7),
-        type: AnomalyType.PAGE_CRASH,
-        scope: AnomalyScope.INFRASTRUCTURE,
-        timestamp: Date.now()
-      });
-    });
-
-    page.on('requestfailed', (request) => {
-      const failure = request.failure();
-      if (failure && (failure.errorText.includes('net::ERR_') || failure.errorText.includes('DNS'))) {
-        this.governor.enqueueAnomaly({
-          id: Math.random().toString(36).substring(7),
-          type: AnomalyType.NETWORK_FAILURE,
-          scope: AnomalyScope.INFRASTRUCTURE,
-          sourceUrl: request.url(),
-          timestamp: Date.now(),
-          rawError: failure.errorText
-        });
-      }
-    });
   }
 
   /**
-   * Madde #33 (ilk adım): PlaywrightPageObserver'ın (IStateObserver
-   * implementasyonu) 'anomaly' event'ini, governor'ın beklediği
-   * SemanticAnomaly'ye çevirir. Bu, iki farklı AnomalyType enum'unu
-   * (IStateObserver'ınki vs governor-command.types.ts'teki) birbirine
-   * eşleyen TEK, açık yer — örtük/dağınık bir eşleme yok.
+   * Madde #33: PlaywrightPageObserver'ın (IStateObserver implementasyonu)
+   * 'anomaly' event'ini, governor'ın beklediği SemanticAnomaly'ye çevirir.
+   * Bu, iki farklı AnomalyType enum'unu (IStateObserver'ınki vs
+   * governor-command.types.ts'teki) birbirine eşleyen TEK, açık yer —
+   * örtük/dağınık bir eşleme yok.
+   *
+   * (TAM KAPANIŞ, bu tur) `PROCESS_CRASHED`/`NETWORK_ERROR` case'leri
+   * eklendi — önceden bu ikisi PersistentStateEngine içinde ham
+   * `page.on('crash'/'requestfailed', ...)` olarak, bu çeviri katmanının
+   * DIŞINDA enqueue ediliyordu. `rawError`, sadece `NETWORK_ERROR` payload'ında
+   * (`details.rawError`) doluyor — `sourceUrl` zaten jenerik olarak,
+   * mevcut kodda aşağıda tek yerden çıkarılıyor.
    */
   private translateObserverAnomaly(payload: AnomalyPayload): void {
     let type: AnomalyType;
@@ -388,6 +373,14 @@ export class PersistentStateEngine implements RecoveryCommandPort {
         type = AnomalyType.HTTP_403;
         scope = AnomalyScope.IP;
         break;
+      case 'PROCESS_CRASHED':
+        type = AnomalyType.PAGE_CRASH;
+        scope = AnomalyScope.INFRASTRUCTURE;
+        break;
+      case 'NETWORK_ERROR':
+        type = AnomalyType.NETWORK_FAILURE;
+        scope = AnomalyScope.INFRASTRUCTURE;
+        break;
       default:
         // SESSION_EXPIRED / CHALLENGE_DETECTED: PlaywrightPageObserver bu
         // turda bunları hiç emit ETMİYOR (bkz. kendi başlığı) — ama
@@ -401,6 +394,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     }
 
     const sourceUrl = typeof payload.details?.sourceUrl === 'string' ? payload.details.sourceUrl : undefined;
+    const rawError = typeof payload.details?.rawError === 'string' ? payload.details.rawError : undefined;
 
     this.governor.enqueueAnomaly({
       id: Math.random().toString(36).substring(7),
@@ -408,12 +402,13 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       scope,
       statusCode: payload.statusCode,
       sourceUrl,
+      rawError,
       timestamp: new Date(payload.timestamp).getTime()
     });
   }
 
   /**
-   * Madde #22 (BU TUR — recordSuccess() köprüsü): PlaywrightPageObserver'ın
+   * Madde #22 (recordSuccess() köprüsü): PlaywrightPageObserver'ın
    * 'state' event'i (SADECE genuinely başarılı, response.ok() olan
    * response'lar için, geçerli/negatif-olmayan bir responseEnd timing'i ile)
    * bu metoda düşer. `this.currentLease` yoksa (örn. observer henüz eski bir
@@ -457,7 +452,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           break;
 
         case GovernorAction.ROTATE_SESSION_ONLY:
-          // (Madde #22 — BU TUR) ROTATE_SESSION_ONLY, AdaptiveGovernor.evaluatePolicy()'de
+          // (Madde #22) ROTATE_SESSION_ONLY, AdaptiveGovernor.evaluatePolicy()'de
           // HEM HTTP_429 (scope=SESSION) HEM CHALLENGE_DETECTED için tetikleniyor.
           // markFailed('HTTP_429') SADECE gerçek anomaly HTTP_429 ise çağrılır —
           // aksi halde bir CHALLENGE_DETECTED rotasyonu proxy'nin http429Count'unu
@@ -469,7 +464,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           break;
 
         case GovernorAction.FULL_RECOVERY:
-          // (Madde #22 — BU TUR) FULL_RECOVERY üç farklı anomaly tipinden
+          // (Madde #22) FULL_RECOVERY üç farklı anomaly tipinden
           // tetiklenebilir: PAGE_CRASH, NETWORK_FAILURE, AUTH_VALIDATION_FAILED.
           // İlk ikisi gerçekten proxy kaynaklı olabilir, ama AUTH_VALIDATION_FAILED
           // session/auth-state sorunudur — proxy sağlıklı olabilir. ROTATE_SESSION_ONLY
