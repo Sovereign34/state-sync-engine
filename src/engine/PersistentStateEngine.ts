@@ -85,6 +85,26 @@
 //          dosya için çalıştırılan grep sadece 5 çağrı bulmuştu (261, 321,
 //          390, 443, 487) — gerçek dosyada 2 fazla çağrı (177, 212) olduğu
 //          bu turda tam dosya okunurken fark edildi, hepsi dahil edildi.
+// (Madde #24 — bu tur) Lifecycle state guard eklendi: `lifecycleState:
+//          'created' | 'ready' | 'closing' | 'closed'`. `initialize()` artık
+//          'created' dışında bir state'te throw eder (çift initialize
+//          engellendi). `handleDecision()` artık 'ready' dışında bir
+//          state'te no-op + warn log yapar (governor kararları guard'lı).
+//          `createSessionWithFreshState()`'in COMMIT adımı state='ready' set
+//          eder. GERÇEK BULGU (tespit bu maddeyi açtı): `attachLifecycleObservers()`
+//          her çağrıldığında yeni bir `PlaywrightPageObserver` oluşturuyordu
+//          ama referans HİÇBİR instance alanında saklanmıyordu — ne
+//          `close()` ne de sonraki bir rotasyon eski observer'ı `stop()`
+//          edebiliyordu (leak, sadece close()'da değil her recovery
+//          rotasyonunda). Artık `this.observer` alanında saklanıyor;
+//          `attachLifecycleObservers()` yeni observer kurmadan ÖNCE
+//          `this.observer?.stop()` çağırıyor. `close()` artık idempotent
+//          (closing/closed state'inde no-op), observer'ı stop ediyor, VE
+//          `this.context`/`this.page`'i kapanıştan sonra `undefined`'a
+//          çekiyor (stale referans riski kapatıldı — `getPage()`/`getContext()`
+//          artık kapalı bir context/page döndürmüyor). `governor.setCommandPort`
+//          kaydına BİLİNÇLİ OLARAK dokunulmadı — KARAR BİLDİRİMİ governor
+//          tarafına dokunmama sınırını koymuştu.
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
@@ -118,6 +138,14 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     sessionStorage: {}
   };
   private isRecovering = false;
+  // Madde #24: engine'in dispose/guard sözleşmesi. 'created' → sadece
+  // initialize() bir kez çalışabilir; 'ready' → governor kararları kabul
+  // edilir; 'closing'/'closed' → close() idempotent hale gelir.
+  private lifecycleState: 'created' | 'ready' | 'closing' | 'closed' = 'created';
+  // Madde #24: her createSessionWithFreshState() çağrısında yeni bir
+  // PlaywrightPageObserver kuruluyor — bu referans, önceki observer'ı
+  // stop() edebilmek için saklanıyor (bkz. attachLifecycleObservers).
+  private observer?: PlaywrightPageObserver;
 
   constructor(
     private browser: Browser,
@@ -140,10 +168,28 @@ export class PersistentStateEngine implements RecoveryCommandPort {
    * bu metod üzerinden, `Promise.allSettled` ile beklenerek iletir.
    */
   public async handleDecision(decision: GovernorDecisionEvent): Promise<void> {
+    // Madde #24: engine 'ready' değilken (henüz initialize edilmemiş ya da
+    // close()/closing sürecindeyken) bir governor kararı gelirse, kararı
+    // sessizce yutmak yerine açıkça logla ve no-op yap (Madde 22 disiplini —
+    // sessiz fallback yasak).
+    if (this.lifecycleState !== 'ready') {
+      this.logger.warn("Engine 'ready' state'inde değilken governor kararı alındı — yok sayıldı", {
+        lifecycleState: this.lifecycleState,
+        action: decision.action,
+      });
+      return;
+    }
     await this.handleGovernorDecision(decision);
   }
 
   public async initialize(): Promise<void> {
+    // Madde #24: çift initialize() engellendi — engine sadece 'created'
+    // state'indeyken başlatılabilir.
+    if (this.lifecycleState !== 'created') {
+      throw new Error(
+        `PersistentStateEngine.initialize() sadece 'created' state'inde çağrılabilir (mevcut: ${this.lifecycleState})`
+      );
+    }
     await this.createSessionWithFreshState(false);
   }
 
@@ -321,6 +367,10 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       this.page = newPage;
       this.currentLease = newLease;
       this.preservedState = stateToApply;
+      // Madde #24: COMMIT tamamlandı — engine artık governor kararı kabul
+      // edebilir. initialize() ilk çağrıldığında 'created' → 'ready'; her
+      // recovery rotasyonunda 'ready' → 'ready' (no-op değişim, zararsız).
+      this.lifecycleState = 'ready';
 
       if (previousContext) {
         await previousContext.close().catch(() => {});
@@ -354,11 +404,17 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     // geliyor. Bu metod artık hiçbir ham Playwright event'ini görmüyor,
     // sadece AnomalyPayload → SemanticAnomaly çevirisini yapıyor
     // (translateObserverAnomaly).
+    // Madde #24: yeni observer kurulmadan ÖNCE eski observer stop edilir —
+    // önceden bu referans hiç saklanmadığı için her rotasyonda bir
+    // PlaywrightPageObserver sızıyordu (sadece close()'da değil).
+    this.observer?.stop();
+
     const observer = new PlaywrightPageObserver(page);
     observer.on('anomaly', (payload) => this.translateObserverAnomaly(payload));
     // Madde #22: recordSuccess() köprüsü — bkz. handleObserverState().
     observer.on('state', (payload) => this.handleObserverState(payload));
     observer.start();
+    this.observer = observer;
   }
 
   /**
@@ -551,12 +607,30 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   }
 
   public async close(): Promise<void> {
+    // Madde #24: idempotent — iki kez close() çağrılırsa (önceden tanımsız
+    // davranış) ikinci çağrı no-op'tur.
+    if (this.lifecycleState === 'closing' || this.lifecycleState === 'closed') {
+      return;
+    }
+    this.lifecycleState = 'closing';
+
+    // Madde #24: observer artık stop ediliyor — önceden hiç çağrılmıyordu.
+    this.observer?.stop();
+    this.observer = undefined;
+
     if (this.context) {
       await this.context.close().catch(() => {});
     }
+    // Madde #24: stale referans riski kapatıldı — getPage()/getContext()
+    // artık kapanmış bir context/page döndürmüyor.
+    this.context = undefined;
+    this.page = undefined;
+
     if (this.currentLease) {
       this.proxyManager.releaseProxy(this.currentLease.leaseId);
       this.currentLease = undefined;
     }
+
+    this.lifecycleState = 'closed';
   }
 }
