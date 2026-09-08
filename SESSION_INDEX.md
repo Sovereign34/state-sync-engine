@@ -67,19 +67,46 @@
     kaldırıldı. **Housekeeping (kullanıcı onayıyla):** derlenmiş
     `runtime-check-health.js` repo kökünden silindi (diğer
     `runtime-check-*` dosyaları gibi yalnızca `.ts` kaynağı kalıyor).
+  - **(Yeni) Madde #15 — Structured (JSON) logging: TAM KAPANDI (Session 3).**
+    Tam ayrıntı Kapanan Maddeler Geçmişi'nde — özet: `src/telemetry/`
+    katmanı (`ILogger` sözleşmesi + `ConsoleJsonLogger` implementasyonu)
+    eklendi ve 3 tüketici dosya (`ProxyHealthStore.ts`,
+    `PersistentStateEngine.ts`, `index.ts`) ayrı ayrı KARAR BİLDİRİMİ'leriyle
+    güncellendi — repo genelinde düz `console.*` çağrısı kalmadı (toplam 11
+    çağrı; `PersistentStateEngine.ts`'te grep'in gösterdiği 5 değil, dosyada
+    gerçekten bulunan 7 çağrı temel alındı). Doğrulama: izole
+    `runtime-check-logger.ts` ile **4/4 PASS** (seviye→doğru console metodu,
+    `meta` çekirdek alanları ezemiyor, circular `meta` throw etmeden
+    `metaSerializationError:true` ile düşüyor, `meta` verilmeyince ekstra
+    alan sızmıyor) + repo genelinde `npx tsc --noEmit; echo "EXIT CODE: $?"`
+    → **EXIT CODE: 0** (3 tüketici dosya dahil). Madde P1 tablosundan
+    kaldırıldı. **Kapsam dışı bırakılan açık takipler:** (a) log seviyesi
+    filtreleme (env var ile min-level) — muhtemelen Madde #27 (config) ile
+    birleşecek; (b) `runtime-check-logger.ts` içindeki TEST 5
+    (`ProxyHealthStore` entegrasyon testi) Kural #5 gereği bu turdan
+    çıkarıldı, `better-sqlite3` kurulum eksikliğine bağımlı hale
+    getirilmedi — Madde #13/#2'nin zaten açık olan composition-root
+    takibiyle birleşiyor.
 - **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — gerçek
   entegrasyon testi kullanıcı kararıyla ertelenmiş, aktif çalışılmıyor.
-  Fiilen P0'da aktif iş yok. Madde #2'nin kapanmasıyla P1'den seçim
-  daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un ertelenmiş
-  testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi seçilsin (öneri:
-  **#15** Structured logging — Madde #2 turunda zaten `console.error` ile
-  JSON formatlı stopgap kullanıldı, tam katman hâlâ yok — ya da **#24**
-  Engine lifecycle); (c) Madde #13'ün kapsam dışı bırakılan açık takipleri
-  mi ele alınsın — composition-root wiring ve `better-sqlite3` bağımlılığı
-  (bu ihtiyaç artık Madde #2/`ProxyHealthStore` için de aynı composition-root
-  noktasında geçerli, aynı `dbPath` sorusu iki madde için de hâlâ açık).
-  Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap
-  Bekleyen Sorular).
+  Fiilen P0'da aktif iş yok. Madde #2 ve #15'in kapanmasıyla P1'den seçim
+  daha da daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un
+  ertelenmiş testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi seçilsin
+  (öneri: **#24** Engine lifecycle ya da **#27** Merkezi immutable
+  configuration — #27 artık Madde #15'in ertelediği log-level filtreleme
+  ile de bağlantılı); (c) Madde #13/#2'nin kapsam dışı bırakılan ortak açık
+  takibi mi ele alınsın — composition-root wiring ve `better-sqlite3`
+  bağımlılığı (bu ihtiyaç artık üç madde — #13, #2 ve kısmen #15'in
+  ertelenen TEST 5'i — için aynı composition-root noktasında geçerli, aynı
+  `dbPath` sorusu hâlâ açık). Ayrıca hâlâ açık: #9 vs #17 etiket
+  tutarsızlığı sorusu (bkz. ❓ Cevap Bekleyen Sorular).
+- **⚠️ Dosya boyutu notu:** Bu dosya şu an ~430 satır, 400 satır eşiğini
+  (CORE.md §7.1 / Kural #11) yeniden aşmış durumda. Bu turda arşivleme
+  YAPILMADI çünkü `session_arşiv.md`'nin güncel içeriği bu oturumda
+  paylaşılmadı — Taşıma 5'i güvenle ekleyebilmek için önce mevcut
+  `session_arşiv.md` dosyasının paylaşılması gerekiyor. Bir sonraki session
+  açılışında bu adım öncelikli yapılmalı (madde silme/özetleme değil, TAM
+  taşıma).
 
 ---
 
@@ -107,6 +134,12 @@
 - ~~Madde #2 — TTL süresi (24 saat) production için uygun mu, housekeeping
   (`runtime-check-health.js`) silinsin mi?~~ — **kullanıcı onayladı**: TTL
   24 saat sabitlendi, dosya silindi.
+- ~~Madde #15 — `ILogger` enjeksiyon şekli (opsiyonel + varsayılan
+  `ConsoleJsonLogger`) ve `index.ts` demo bloğundaki `console.*`'ların da
+  taşınıp taşınmayacağı?~~ — **fiilen çözüldü**: 3 tüketici dosya (demo
+  bloğu dahil `index.ts`) merkezi `ILogger`'ı kullanacak şekilde
+  güncellendi, tutarlılık tercih edildi; opsiyonel/varsayılan enjeksiyon
+  deseni değişmeden uygulandı ve testlerle doğrulandı.
 
 ---
 
@@ -124,11 +157,10 @@
 | 11 | Multi-origin state izolasyonu | state |
 | 12 | State versioning / migration (StateEnvelope) | state |
 | 14 | Telemetry aggregation katmanı | telemetry |
-| 15 | Structured (JSON) logging | telemetry |
 | 16 | Correlation ID / distributed tracing | telemetry |
 | 24 | Engine lifecycle (start/stop/dispose) | engine |
 | 25 | Graceful shutdown (SIGTERM/SIGINT) | engine |
-| 27 | Merkezi immutable configuration | engine |
+| 27 | Merkezi immutable configuration | engine — artık Madde #15'in ertelediği log-level filtreleme kararıyla da bağlantılı |
 | 28 | Retry budget | policies |
 | 29 | Circuit breaker (proxy/session/resource) | policies |
 
@@ -217,9 +249,8 @@
   ayrı `proxy_health` tablosu.** Gerekçe: tek-node motor, ekstra
   servis/network bağımlılığı istenmiyor; Redis ve Neon/Postgres kullanıcı
   onayıyla elendi. **Madde TAM KAPANDI** — TTL = 24 saat kullanıcı onayıyla
-  sabitlendi; yazma `markFailed()` içinde best-effort (try/catch + JSON
-  `console.error`, throw edilmez, in-memory state etkilenmez). **Kapsam
-  dışı bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
+  sabitlendi; yazma `markFailed()` içinde best-effort. **Kapsam dışı
+  bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
   kullanılacağı hâlâ görülmedi — Madde #13'ün aynı türden açık takibiyle
   birleşiyor, ikisi de aynı composition-root noktasında çözülecek.
 - **Madde #13 — Secret yönetimi kaynağı KARARLAŞTIRILDI ve UYGULANDI: env var
@@ -230,6 +261,19 @@
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume + resmi Playwright Docker image. Kesinleşmiş
   değil, deploy aşamasında tekrar teyit edilecek.
+- **(Yeni) Madde #15 — Merkezi loglama kaynağı KARARLAŞTIRILDI ve UYGULANDI:
+  `src/telemetry/ILogger.ts` (arayüz: `debug/info/warn/error`, her biri
+  `message: string` + opsiyonel `meta: Record<string, unknown>` alır) +
+  `src/telemetry/ConsoleJsonLogger.ts` (constructor'da `component: string`
+  alır, `{"level","component","message",...meta}` JSON şeklini üretir).**
+  Enjeksiyon deseni **opsiyonel constructor parametresi** (verilmezse
+  `ConsoleJsonLogger` varsayılan) — `authValidator`'ın ZORUNLU olmasından
+  BİLİNÇLİ OLARAK farklı, çünkü loglama eksikliği Kural #4 anlamında "sahte
+  veri/sessiz fallback" üretmiyor, sadece log basmıyor. **Madde TAM
+  KAPANDI.** **Kapsam dışı bırakılan açık takipler:** (a) log seviyesi
+  filtreleme (env var ile min-level) — Madde #27 ile birleşebilir; (b)
+  composition-root/`better-sqlite3` ile aynı ailede duran, ertelenmiş bir
+  entegrasyon testi (bkz. Kapanan Maddeler Geçmişi).
 
 ---
 
@@ -253,6 +297,12 @@
 > DURUM'daki ve bu bölümdeki tüm Madde #22 girdilerinin TAM METİN kopyaları
 > `session_arşiv.md`'ye (Taşıma 4) eklendi, `TASIMA_4.md` dosyasına bakınız
 > — silinmedi, sadece SESSION_INDEX'te kısa özet/referans bırakıldı.
+> **(Bekliyor — Taşıma 5)** SESSION_INDEX.md 400 satır eşiği ÜÇÜNCÜ kez
+> aşıldı (bu tur, Madde #15 kapanışıyla). Bu turda `session_arşiv.md`'nin
+> güncel hâli elimizde olmadığı için TAM taşıma YAPILMADI — sadece bu not
+> düşüldü. Bir sonraki session'da öncelik: mevcut `session_arşiv.md`
+> paylaşılsın, en eski kapanmış bloklar (aday: Madde #22 ve #13 tam
+> metinleri) Taşıma 5 olarak arşive eklensin.
 
 - **Madde #22 — TÜM ALT-KAPSAMLARIYLA TAM KAPANDI (Session 3), P0
   tablosundan kaldırıldı.** Tam ayrıntı `session_arşiv.md`'de (Taşıma 4) —
@@ -267,76 +317,74 @@
   `STATE_SYNC_ENCRYPTION_KEY` + AES-256-GCM envelope encryption) ve
   `ProxyCredentialStore` (`src/state/`, SQLite / `better-sqlite3`) eklendi;
   `AdvancedProxyManager` constructor'ı geriye dönük uyumlu opsiyonel 3.
-  parametre (`credentialStore?`) ile genişletildi. Entegrasyon: constructor'da
-  önce `credentialStore.loadAll()` ile DB'deki kayıtlar sessizce map'e
-  yüklenir; `initialProxies` SONRA işlenir — `registerProxy()`'nin "zaten
-  kayıtlıysa dokunma" kuralı sayesinde DB kazanır, config'teki yeni proxy'ler
-  için tek seferlik DB yazması tetiklenir. Doğrulama: `runtime-check-persistence.ts`
-  ile **4/4 PASS** (env var yokken fail-fast, DB'de tek satır, yanlış key ile
-  fail-closed, DB'den credential doğru yükleniyor); `npx tsc --noEmit; echo
-  "EXIT CODE: $?"` → **EXIT CODE: 0**. **Güvenlik notu:** doğrulama sırasında
-  üretilen bir `STATE_SYNC_ENCRYPTION_KEY` örneği bir ekran görüntüsünde
-  açığa çıkmıştı, kullanıcıya rotate etmesi önerildi. **Kapsam dışı bırakılan
-  açık takip:** (a) `package.json`'a `better-sqlite3` eklenmesi, (b)
-  composition-root'ta `credentialStore` injection — ikisi de hâlâ görülmedi.
+  parametre (`credentialStore?`) ile genişletildi. Doğrulama:
+  `runtime-check-persistence.ts` ile **4/4 PASS**; `npx tsc --noEmit; echo
+  "EXIT CODE: $?"` → **EXIT CODE: 0**. **Güvenlik notu:** doğrulama
+  sırasında üretilen bir `STATE_SYNC_ENCRYPTION_KEY` örneği bir ekran
+  görüntüsünde açığa çıkmıştı, kullanıcıya rotate etmesi önerildi. **Kapsam
+  dışı bırakılan açık takip:** (a) `package.json`'a `better-sqlite3`
+  eklenmesi, (b) composition-root'ta `credentialStore` injection — ikisi de
+  hâlâ görülmedi.
 - **(Yeni) Madde #33 — TAM KAPANDI (Session 3), P0 tablosundan kaldırıldı:**
   `crash`/`requestfailed`, `PersistentStateEngine.attachLifecycleObservers()`
-  içinde ham `page.on(...)` olarak kalan son iki sinyaldi (429/403 önceki
-  turda zaten `IStateObserver` üzerinden taşınmıştı). Engel:
-  `IStateObserver.AnomalyType` (jenerik/domain-bağımsız sözleşme)
-  `PAGE_CRASH`/`NETWORK_FAILURE`'a karşılık içermiyordu — var olan
-  kategorilerden birine zorla sığdırmak sahte sinyal üretirdi (Madde 22
-  ihlali). **[KARAR BİLDİRİMİ] onaylandı ve UYGULANDI:**
-  `IStateObserver.AnomalyType`'a jenerik `PROCESS_CRASHED`/`NETWORK_ERROR`
-  değerleri eklendi — BİLİNÇLİ OLARAK governor tarafının
-  `PAGE_CRASH`/`NETWORK_FAILURE` isimleriyle FARKLI isimler seçildi (iki
-  ayrı `AnomalyType`'ın karıştırılmaması için). `PlaywrightPageObserver.ts`:
-  `start()`/`stop()` artık `crash`/`requestfailed`'i de kaydediyor/kaldırıyor
-  (`'response'` ile aynı yaşam döngüsü); `requestfailed` için mevcut
-  `net::ERR_`/`DNS` filtresi AYNEN korundu, kapsam genişletilmedi.
-  `PersistentStateEngine.ts`: iki ham `page.on(...)` bloğu silindi;
-  `translateObserverAnomaly()`'ye `PROCESS_CRASHED`→`PAGE_CRASH`/
-  `INFRASTRUCTURE` ve `NETWORK_ERROR`→`NETWORK_FAILURE`/`INFRASTRUCTURE`
-  case'leri eklendi (+ `rawError` çıkarımı, `sourceUrl` zaten jenerikti).
-  **Doğrulama:** yeni `runtime-check-observer.ts` (sahte/mock bir Page ile)
-  **6/6 PASS** — crash→`PROCESS_CRASHED`, `net::ERR_` hatası→`NETWORK_ERROR`
-  (+ `rawError`/`sourceUrl` doğru taşınıyor), filtre dışı hata emit
-  edilmiyor (filtre bozulmadı), `stop()` sonrası hiçbir event artık
-  dinlenmiyor. `npx tsc --noEmit; echo "EXIT CODE: $?"` → **EXIT CODE: 0**.
-  Madde #33 bu turda TAM KAPANDI — `attachLifecycleObservers()`'da artık
-  hiçbir ham Playwright event'i kalmadı.
+  içinde ham `page.on(...)` olarak kalan son iki sinyaldi. `IStateObserver.
+  AnomalyType`'a jenerik `PROCESS_CRASHED`/`NETWORK_ERROR` değerleri
+  eklendi — governor tarafından BİLİNÇLİ OLARAK farklı isimlerle.
+  Doğrulama: `runtime-check-observer.ts` **6/6 PASS**, `npx tsc --noEmit` →
+  **EXIT CODE: 0**.
 - **(Yeni) Madde #2 — Persistent proxy state TAM KAPANDI (Session 3), P1
-  tablosundan kaldırıldı:** yeni `ProxyHealthStore`
+  tablosundan kaldırıldı:** `ProxyHealthStore`
   (`src/state/ProxyHealthStore.ts`) proxy health/quarantine alanlarını
-  (`latencyMs, dnsFailures, tlsFailures, http403Count, http429Count,
-  successCount, failureCount, lastUsed, quarantineUntil`) SQLite'a kalıcı
-  hale getiriyor — `ProxyCredentialStore` ile **aynı DB dosyası, ayrı
-  `proxy_health` tablosu** (Madde #13'ün turundaki credential
-  entegrasyonuyla birebir simetrik desen). Yazma **SADECE**
-  `AdvancedProxyManager.markFailed()` içinde `quarantineUntil` güncellendiği
-  anda tetikleniyor (write-through değil — bilinçli karar, ara başarı
-  güncellemeleri restart'a kadar yalnızca bellekte kalıyor, `successCount`
-  restart sonrası bir miktar "geride" kalabilir — kabul edilen trade-off).
-  `AdvancedProxyManager` constructor'ına opsiyonel 4. parametre
-  (`healthStore?: ProxyHealthStore`) eklendi; credential `loadAll()`'dan
-  SONRA, `initialProxies` işlenmeden ÖNCE health verisi yüklenir ve **TTL
-  kontrolünden** geçirilir — TTL aşılmışsa sayaçlar/karantina bellekte
-  sıfır kabul edilir, TTL içindeyse aynen uygulanır. **TTL = 24 saat,
-  kullanıcı onayıyla sabitlendi.** Yazma hatası **best-effort**: try/catch
-  + structured JSON `console.error`, throw edilmez, in-memory state
-  etkilenmez (Madde #15 tam telemetry katmanı henüz yok — bu geçici/uyumlu
-  bir stopgap). **Doğrulama:** `runtime-check-health.js` ile **6/6 PASS**
-  (save()+loadAll() round trip; TTL süresi geçmiş kayıt hariç tutulur;
-  restart sonrası health hydration doğru çalışır; orphan health kaydı yeni
-  proxy yaratmaz; `recordSuccess()` persist tetiklemez, `markFailed()`
-  tetikler; DB yazma hatası `markFailed()`'i kırmaz), `npx tsc --noEmit;
-  echo "EXIT CODE: $?"` → **EXIT CODE: 0**. **Housekeeping (kullanıcı
-  onayıyla):** derlenmiş `runtime-check-health.js` repo kökünden silindi —
-  diğer `runtime-check-*` dosyaları gibi yalnızca `.ts` kaynağı kalıyor.
-  **Kapsam dışı bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
-  kullanılacağı hâlâ görülmedi — Madde #13'ün zaten açık olan kapsam-dışı
-  takibiyle aynı nokta, iki madde artık aynı composition-root çözümünü
-  bekliyor.
+  `ProxyCredentialStore` ile aynı DB dosyasında ayrı `proxy_health`
+  tablosunda kalıcı hale getiriyor — yazma sadece `markFailed()` içinde
+  `quarantineUntil` güncellendiği anda tetikleniyor, TTL = 24 saat.
+  Doğrulama: `runtime-check-health.js` ile **6/6 PASS**, `npx tsc --noEmit`
+  → **EXIT CODE: 0**. **Housekeeping:** derlenmiş `.js` repo kökünden
+  silindi. **Kapsam dışı bırakılan açık takip:** composition-root `dbPath`
+  sorusu, Madde #13'ünkiyle birleşiyor.
+- **(Yeni) Madde #15 — Structured (JSON) logging TAM KAPANDI (Session 3),
+  P1 tablosundan kaldırıldı:** Kural #5 ("Governor/ProxyManager/StateEngine
+  aynı turda birlikte değiştirilmez") gereği önce sözleşme + implementasyon
+  izole verildi: `src/telemetry/ILogger.ts` (`debug/info/warn/error`, her
+  biri `message` + opsiyonel `meta: Record<string, unknown>`) ve
+  `src/telemetry/ConsoleJsonLogger.ts` (constructor'da `component: string`,
+  `{"level","component","message",...meta}` JSON çıktısı üretir — daha
+  önce `ProxyHealthStore`'un stopgap olarak kullandığı şeklin tek merkezi
+  kaynağı). Ardından 3 tüketici dosya (`ProxyHealthStore.ts`,
+  `PersistentStateEngine.ts`, `index.ts`) SecretProvider/AuthValidationPort'ta
+  izlenen sırayla, ayrı ayrı KARAR BİLDİRİMİ'leriyle güncellendi.
+  **Tutarsızlık bulundu ve düzeltildi:** `PersistentStateEngine.ts` için
+  grep çıktısı (2 gün önce alınmış) 5 `console.*` çağrısı gösteriyordu,
+  ama gerçek dosyada 7 vardı (`captureState`/`applyState` catch
+  bloklarındaki 2 `console.warn` grep'te kayıptı) — gerçek dosya esas
+  alındı, 7 çağrının tamamı değiştirildi. Repo genelinde toplam **11**
+  `console.*` çağrısı `ILogger`'a taşındı (`index.ts`'teki demo bloğu
+  dahil — tutarlılık için taşınmasına karar verildi). Enjeksiyon deseni
+  `healthStore?`/`credentialStore?` ile aynı desende **opsiyonel constructor
+  parametresi**; verilmezse `ConsoleJsonLogger` varsayılan olur — bu,
+  `authValidator`'ın ZORUNLU yapılmasından BİLİNÇLİ OLARAK farklı, çünkü
+  loglama eksikliği "sahte veri/sessiz fallback" (Kural #4) üretmiyor,
+  sadece log basmıyor. Doğrulama: izole `runtime-check-logger.ts` ile
+  **4/4 PASS** (seviye→doğru `console.*` metodu + doğru JSON şekli; `meta`
+  içindeki çakışan anahtarlar `level/component/message`'ı ezemiyor;
+  circular `meta` throw etmiyor, `metaSerializationError:true` ile
+  `message` kaybolmadan devam ediyor; `meta` verilmediğinde ekstra alan
+  sızmıyor) + repo genelinde (3 tüketici dosya dahil, projenin kendi
+  `tsconfig.json`'ıyla) `npx tsc --noEmit; echo "EXIT CODE: $?"` →
+  **EXIT CODE: 0**. **Kapsam dışı bırakılan açık takipler:** (a) log
+  seviyesi filtreleme (env var ile min-level) — muhtemelen Madde #27
+  (merkezi config) ile birleşecek; (b) `runtime-check-logger.ts` içindeki
+  `ProxyHealthStore` entegrasyon testi (TEST 5) bu turda dosyadan çıkarıldı
+  — Kural #5 gereği Madde #15'in kapanışını `better-sqlite3` kurulumuna
+  bağımlı hale getirmemek için, `ILogger` importu/kullanımı bırakılıp
+  sadece izole sözleşme test edildi; `better-sqlite3` kendi başına Madde
+  #13/#2'nin zaten açık olan composition-root takibinde kalmaya devam
+  ediyor. **Ayrıca not (araç uyumsuzluğu, kod kaynaklı değil):** Node'un
+  yerleşik TypeScript desteği (Node 24) uzantısız relative import'ları
+  çözemediği için `runtime-check-logger.ts` doğrudan `node` ile
+  çalıştırılamadı — projenin kendi konvansiyonuna uyularak `npx tsc`
+  ile `/tmp` altına derlenip derlenmiş `.js` çalıştırıldı (repo köküne
+  housekeeping gereken bir dosya bırakılmadı).
 
 ---
 
@@ -386,41 +434,58 @@
   kullanılması (composition-root wiring, bağımlılık kurulumu) ayrı ve hâlâ
   açık bir takip maddesi olabilir — "madde kapandı" ile "özellik
   production'da aktif" karıştırılmamalı.
-- **(Yeni — Madde #33 turu)** Jenerik/domain-bağımsız tasarlanmış bir
-  sözleşmeyi (örn. `IStateObserver.AnomalyType`) genişletirken, yeni
-  değerlere BİLİNÇLİ OLARAK tüketici katmandaki (governor) benzer isimli
-  tiplerden FARKLI isimler vermek, iki ayrı sözleşmenin yanlışlıkla aynı
-  tip sanılmasını (ve birinin diğerinin yerine geçirilmesini) daha başından
-  engeller — isim benzerliği ucuz ama kalıcı bir karışıklık kaynağıdır.
-- **(Yeni — Madde #33 turu)** Bir "bilinçli olarak kapsam dışı bırakıldı"
-  notu (dosya başlığında), kod ilerledikçe geçersiz kalabilir — bu turda
-  önceki `PlaywrightPageObserver.ts` başlığındaki "crash/requestfailed
-  kasıtlı taşınmadı" notu, madde tam kapanınca güncellenmesi gereken bir
-  notun kendisi hâline geldi; kapanış notları sadece SESSION_INDEX'te değil,
-  ilgili kod dosyasının kendi başlığında da güncellenmeli.
-- **(Yeni — Madde #2 turu)** Write-through olmayan (yalnızca belirli bir
-  olayda tetiklenen) bir persistence kararı, "hangi alanların ne zaman
-  güncel olduğu" konusunda kalıcı bir trade-off yaratır — bu, madde
-  kapanışında sadece test PASS olarak değil, açıkça kabul edilmiş bir
-  sınırlama olarak not düşülmeli, aksi halde ileride "bug" sanılabilir.
-- **(Yeni — Madde #2 turu)** Aynı composition-root açık takibi (`dbPath`
-  kimin tarafından enjekte edileceği) birden fazla maddede tekrar
-  ediyorsa, bu maddeler kapandıkça tek tek "hâlâ görülmedi" diye tekrar
-  tekrar not düşmek yerine, composition-root'un kendisi ayrı bir P1/P0
-  madde adayı olarak değerlendirilmeli.
+- **(Madde #33 turu)** Jenerik/domain-bağımsız tasarlanmış bir sözleşmeyi
+  (örn. `IStateObserver.AnomalyType`) genişletirken, yeni değerlere BİLİNÇLİ
+  OLARAK tüketici katmandaki (governor) benzer isimli tiplerden FARKLI
+  isimler vermek, iki ayrı sözleşmenin yanlışlıkla aynı tip sanılmasını
+  daha başından engeller.
+- **(Madde #33 turu)** Bir "bilinçli olarak kapsam dışı bırakıldı" notu
+  (dosya başlığında), kod ilerledikçe geçersiz kalabilir — kapanış notları
+  sadece SESSION_INDEX'te değil, ilgili kod dosyasının kendi başlığında da
+  güncellenmeli.
+- **(Madde #2 turu)** Write-through olmayan (yalnızca belirli bir olayda
+  tetiklenen) bir persistence kararı, "hangi alanların ne zaman güncel
+  olduğu" konusunda kalıcı bir trade-off yaratır — bu, madde kapanışında
+  açıkça kabul edilmiş bir sınırlama olarak not düşülmeli, aksi halde
+  ileride "bug" sanılabilir.
+- **(Madde #2 turu)** Aynı composition-root açık takibi birden fazla
+  maddede tekrar ediyorsa, bu maddeler kapandıkça tek tek not düşmek yerine
+  composition-root'un kendisi ayrı bir P1/P0 madde adayı olarak
+  değerlendirilmeli.
+- **(Yeni — Madde #15 turu)** Bir grep sonucu ile gerçek dosya içeriği
+  arasındaki fark, sadece "SESSION_INDEX eski olabilir" ilkesinin değil,
+  aynı zamanda oturum İÇİNDE üretilen ARA çıktıların (birkaç gün önce
+  alınmış bir grep) da bayatlayabileceğinin somut kanıtıdır — bir madde
+  kapanmadan hemen önce referans alınan herhangi bir komut çıktısının
+  "hâlâ güncel mi" diye tekrar doğrulanması, sadece session açılışında
+  değil, madde kapanış anında da gerekli olabilir.
+- **(Yeni — Madde #15 turu)** İzole bir birim testinin (`runtime-check-
+  logger.ts`, sadece `ILogger`/`ConsoleJsonLogger` sözleşmesini test eden)
+  tamamı PASS olması, 3 tüketici dosyanın gerçek entegrasyonunu KANITLAMAZ
+  — bunun için ayrı, repo-genelinde bir derleme kontrolü (`tsc --noEmit`,
+  gerçek `tsconfig.json` ile, tüm tüketici dosyalar dahil) gerekti; iki
+  doğrulama seviyesi birbirinin yerine geçmez.
+- **(Yeni — Madde #15 turu)** Bir maddenin kapanışını, kapsamı dışındaki
+  başka bir açık bağımlılığa (burada: `better-sqlite3` kurulumu) bağımlı
+  hale getirmek yerine, o bağımlılığı gerektiren test/alt-parçayı GEÇİCİ
+  olarak izole edip ayrı bırakmak (Kural #5), üç farklı maddenin kapanış
+  koşullarının birbirine karışmasını önler.
 
 ---
 
-*Not (Session 3, önceki tur): `crash`/`requestfailed` `IStateObserver`
-sözleşmesine taşındı (`PROCESS_CRASHED`/`NETWORK_ERROR` eklenerek),
-`runtime-check-observer.ts` 6/6 PASS + `EXIT CODE: 0` ile doğrulandı.
-**Madde #33 TAM KAPANDI ve P0 tablosundan kaldırıldı.***
+*Not (Session 3, önceki tur): `ProxyHealthStore` ile Madde #2 (persistent
+proxy state) kapatıldı — `runtime-check-health.js` 6/6 PASS + `tsc --noEmit`
+EXIT CODE: 0 ile doğrulandı, TTL=24 saat ve housekeeping kullanıcı
+tarafından onaylandı. **Madde #2 TAM KAPANDI ve P1 tablosundan
+kaldırıldı.***
 
-*Not (Session 3, bu tur): `ProxyHealthStore` ile Madde #2 (persistent proxy
-state) kapatıldı — `runtime-check-health.js` 6/6 PASS + `tsc --noEmit`
-EXIT CODE: 0 ile doğrulandı, TTL=24 saat ve housekeeping (dosya silme)
-kullanıcı tarafından onaylandı. **Madde #2 TAM KAPANDI ve P1 tablosundan
-kaldırıldı.** P0 tablosunda hâlâ sadece **#9** kalıyor — kullanıcı
-kararıyla ertelenmiş, aktif çalışılmıyor. Fiilen P0'da aktif iş yok;
-sıradaki adım kullanıcının tercihine bağlı (bkz. Sıradaki Öncelik). P2
-sayı/kapsam olarak değişmedi.*
+*Not (Session 3, bu tur): `src/telemetry/` katmanı (`ILogger` +
+`ConsoleJsonLogger`) eklendi, 3 tüketici dosya (`ProxyHealthStore.ts`,
+`PersistentStateEngine.ts`, `index.ts`) tek tek güncellendi — izole logger
+testi 4/4 PASS + repo genelinde `tsc --noEmit` EXIT CODE: 0 ile doğrulandı.
+**Madde #15 TAM KAPANDI ve P1 tablosundan kaldırıldı.** P0 tablosunda hâlâ
+sadece **#9** kalıyor — kullanıcı kararıyla ertelenmiş, aktif çalışılmıyor.
+Fiilen P0'da aktif iş yok; sıradaki adım kullanıcının tercihine bağlı (bkz.
+Sıradaki Öncelik). P2 sayı/kapsam olarak değişmedi. **Dosya 400 satır
+eşiğini tekrar aştı — Taşıma 5 bir sonraki session'da `session_arşiv.md`
+paylaşıldıktan sonra yapılacak.***
