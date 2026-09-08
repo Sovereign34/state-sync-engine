@@ -14,9 +14,9 @@
 //  6. PersistentStateEngine, enjekte edilen logger'ı kırmadan constructor'da
 //     kabul ediyor mu (bkz. dosya sonundaki not — bu tur DAR kapsamlı).
 
-import { ConsoleJsonLogger } from '../telemetry/ConsoleJsonLogger';
-import { ProxyHealthStore } from './ProxyHealthStore';
-import type { ILogger, LogMeta } from '../telemetry/ILogger';
+import { ConsoleJsonLogger } from './src/telemetry/ConsoleJsonLogger';
+import { ProxyHealthStore } from './src/state/ProxyHealthStore';
+import type { ILogger, LogMeta } from './src/telemetry/ILogger';
 
 let failures = 0;
 
