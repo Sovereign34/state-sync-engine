@@ -1,25 +1,29 @@
 // PlaywrightPageObserver.ts
-// Amaç:    Madde #33'ün İLK ADIMI — PersistentStateEngine.attachLifecycleObservers()
-//          içinde HAM Playwright event'i olarak (page.on('response', ...))
-//          işlenen 429/403 tespitini, IStateObserver sözleşmesi arkasına alır.
-//          Böylece PersistentStateEngine artık Playwright'ın kendisini değil,
-//          jenerik bir observer arayüzünü tüketir.
+// Amaç:    Madde #33 — PersistentStateEngine.attachLifecycleObservers()
+//          içinde HAM Playwright event'i olarak işlenen tüm sinyalleri
+//          (429/403 response, crash, requestfailed) IStateObserver
+//          sözleşmesi arkasına alır. Böylece PersistentStateEngine artık
+//          Playwright'ın kendisini değil, jenerik bir observer arayüzünü
+//          tüketir.
 // Katman:  adapters
-// Risk:    IStateObserver.ts'teki AnomalyType (RATE_LIMIT_EXCEEDED |
-//          ACCESS_RESTRICTED | SESSION_EXPIRED | CHALLENGE_DETECTED), mevcut
-//          engine'in tespit ettiği TÜM sinyalleri (crash, DNS/network hatası)
-//          LOSSLESS şekilde karşılamıyor — PAGE_CRASH/NETWORK_FAILURE
-//          karşılığı YOK. Bu ikisini var olan kategorilerden birine zorla
-//          sığdırmak (örn. crash'i SESSION_EXPIRED saymak) YANLIŞ bir sinyal
-//          üretir (Madde 22 — sahte veri yasak). Bu yüzden BİLİNÇLİ OLARAK
-//          bu sınıf SADECE 429→RATE_LIMIT_EXCEEDED ve 403→ACCESS_RESTRICTED'i
-//          taşıyor; crash/requestfailed, PersistentStateEngine.ts içinde HAM
-//          Playwright event'i olarak kalmaya devam ediyor (ayrı bir yorum
-//          orada da düşüldü). IStateObserver.AnomalyType'ı genişletmek
-//          (PAGE_CRASH/NETWORK_FAILURE eklemek) mümkün ama bu, jenerik/
+// Risk:    (Madde #33 — TAM KAPANIŞ, bu tur) Önceki turda IStateObserver.
+//          AnomalyType'ta PAGE_CRASH/NETWORK_FAILURE karşılığı YOKTU —
+//          bu yüzden crash/requestfailed PersistentStateEngine.ts içinde
+//          HAM Playwright event'i olarak bırakılmıştı (sahte veri yasağı,
+//          var olmayan bir kategoriye zorla sığdırmamak için). Bu tur,
+//          kullanıcı onayıyla IStateObserver.AnomalyType'a jenerik
+//          `PROCESS_CRASHED`/`NETWORK_ERROR` değerleri eklendi (bkz.
+//          IStateObserver.ts) — artık crash/requestfailed de bu sınıf
+//          üzerinden, 'anomaly' kanalıyla emit ediliyor. `requestfailed`
+//          için önceki mevcut filtre (SADECE `net::ERR_`/`DNS` içeren
+//          hatalar — diğerleri, örn. kullanıcının iptal ettiği request'ler,
+//          kasıtlı olarak sinyal SAYILMAZ) AYNEN korundu, kapsam
+//          genişletilmedi (Madde 22 disiplini).
+//          (Önceki tur) IStateObserver.AnomalyType'ı genişletmek jenerik/
 //          domain-bağımsız tasarlanmış bir sözleşme dosyasını değiştirmek
-//          anlamına gelir — ayrı bir onay/tur.
-//          (Madde #22 — BU TUR) `recordSuccess()` köprüsü için, IStateObserver
+//          anlamına geldiği için ayrı bir onay/tur gerektiriyordu — bu
+//          KARAR BİLDİRİMİ ile o onay alındı.
+//          (Madde #22 — önceki tur) `recordSuccess()` köprüsü için, IStateObserver
 //          sözleşmesinde ZATEN VAR OLAN ama şu ana kadar hiç kullanılmayan
 //          `'state'` event kanalı kullanıldı — sözleşme DEĞİŞTİRİLMEDİ,
 //          sadece ilk kez tüketildi. SADECE genuinely başarılı (`response.ok()`,
@@ -33,13 +37,13 @@
 //          çıkardı. `responseEnd` timing'i bazı durumlarda (disk cache'ten
 //          servis edilen response) `-1` dönebilir — bu durumda 'state' HİÇ
 //          emit edilmiyor (sahte/geçersiz veri yasağı, Madde 22 disiplini).
-// Dokunma: IStateObserver.ts (sözleşme, DEĞİŞTİRİLMEDİ), PersistentStateEngine.ts
-//          (attachLifecycleObservers artık bu sınıfı kullanıyor + AnomalyPayload'ı
-//          SemanticAnomaly'ye çeviren translateObserverAnomaly() eklendi; BU TUR
-//          ayrıca 'state' event'ini dinleyip recordSuccess()'e bağlayan
-//          handleObserverState() eklendi).
+// Dokunma: IStateObserver.ts (sözleşme — bu tur AnomalyType genişletildi,
+//          bkz. o dosyanın başlığı), PersistentStateEngine.ts
+//          (attachLifecycleObservers artık ham page.on('crash'/'requestfailed')
+//          İÇERMİYOR — translateObserverAnomaly() bu tur PROCESS_CRASHED/
+//          NETWORK_ERROR case'leriyle genişletildi).
 
-import { Page, Response } from 'playwright';
+import { Page, Request, Response } from 'playwright';
 import {
   IStateObserver,
   ObserverStatus,
@@ -51,6 +55,13 @@ import {
 type EventHandler<K extends keyof StateObserverEventMap> = (
   payload: K extends 'state' ? StatePayload & { data: Record<string, unknown> } : StateObserverEventMap[K]
 ) => void;
+
+/** `emitAnomaly`'ye geçilen, anomali tipine göre değişen opsiyonel bağlam. */
+interface AnomalyContext {
+  statusCode?: number;
+  sourceUrl?: string;
+  rawError?: string;
+}
 
 export class PlaywrightPageObserver implements IStateObserver {
   private _status: ObserverStatus = 'IDLE';
@@ -70,11 +81,18 @@ export class PlaywrightPageObserver implements IStateObserver {
       return;
     }
     this.page.on('response', this.handleResponse);
+    // (Madde #33 — TAM KAPANIŞ) crash/requestfailed artık bu sınıfın
+    // yaşam döngüsüne bağlı — start()/stop() ile birlikte kayıt/kayıt
+    // silme yapılıyor, tıpkı 'response' gibi.
+    this.page.on('crash', this.handleCrash);
+    this.page.on('requestfailed', this.handleRequestFailed);
     this.setStatus('LISTENING');
   }
 
   public stop(): void {
     this.page.off('response', this.handleResponse);
+    this.page.off('crash', this.handleCrash);
+    this.page.off('requestfailed', this.handleRequestFailed);
     this.setStatus('STOPPED');
   }
 
@@ -116,12 +134,12 @@ export class PlaywrightPageObserver implements IStateObserver {
     const url = response.url();
 
     if (status === 429) {
-      this.emitAnomaly('RATE_LIMIT_EXCEEDED', status, url);
+      this.emitAnomaly('RATE_LIMIT_EXCEEDED', { statusCode: status, sourceUrl: url });
     } else if (status === 403) {
-      this.emitAnomaly('ACCESS_RESTRICTED', status, url);
+      this.emitAnomaly('ACCESS_RESTRICTED', { statusCode: status, sourceUrl: url });
     } else if (response.ok()) {
-      // Madde #22 (BU TUR): genuinely başarılı response — recordSuccess()
-      // köprüsü için 'state' event'i emit edilir. responseEnd bazı durumlarda
+      // Madde #22: genuinely başarılı response — recordSuccess() köprüsü
+      // için 'state' event'i emit edilir. responseEnd bazı durumlarda
       // (disk cache) -1 dönebilir; bu durumda hiç emit ETMİYORUZ (sahte veri
       // yasağı, Madde 22 disiplini) — recordSuccess()'e geçersiz/negatif bir
       // latency sızmasın.
@@ -132,12 +150,39 @@ export class PlaywrightPageObserver implements IStateObserver {
     }
   };
 
-  private emitAnomaly(type: AnomalyPayload['type'], statusCode: number, sourceUrl: string): void {
+  /**
+   * (Madde #33 — TAM KAPANIŞ) Playwright'ın `page.on('crash', ...)` event'i.
+   * Bir sourceUrl/statusCode kavramı yok (sayfa/process seviyesinde bir
+   * olay) — önceki ham implementasyonla birebir aynı bilgi taşınıyor,
+   * sadece IStateObserver'ın 'anomaly' kanalından geçiyor.
+   */
+  private readonly handleCrash = (): void => {
+    this.emitAnomaly('PROCESS_CRASHED', {});
+  };
+
+  /**
+   * (Madde #33 — TAM KAPANIŞ) Playwright'ın `page.on('requestfailed', ...)`
+   * event'i. Önceki ham implementasyondaki filtre AYNEN korundu: SADECE
+   * `net::ERR_` veya `DNS` içeren hata metinleri sinyal sayılır — diğerleri
+   * (örn. kullanıcının/kodun kendi iptal ettiği request'ler) kasıtlı olarak
+   * anomaly ÜRETMEZ (kapsam genişletilmedi, Madde 22 disiplini).
+   */
+  private readonly handleRequestFailed = (request: Request): void => {
+    const failure = request.failure();
+    if (failure && (failure.errorText.includes('net::ERR_') || failure.errorText.includes('DNS'))) {
+      this.emitAnomaly('NETWORK_ERROR', { sourceUrl: request.url(), rawError: failure.errorText });
+    }
+  };
+
+  private emitAnomaly(type: AnomalyPayload['type'], context: AnomalyContext): void {
     const payload: AnomalyPayload = {
       type,
       timestamp: new Date().toISOString(),
-      statusCode,
-      details: { sourceUrl }
+      statusCode: context.statusCode,
+      details: {
+        ...(context.sourceUrl !== undefined ? { sourceUrl: context.sourceUrl } : {}),
+        ...(context.rawError !== undefined ? { rawError: context.rawError } : {})
+      }
     };
     for (const handler of this.anomalyHandlers) {
       (handler as EventHandler<'anomaly'>)(payload);
@@ -145,13 +190,13 @@ export class PlaywrightPageObserver implements IStateObserver {
   }
 
   /**
-   * Madde #22 (BU TUR): `IStateObserver`'ın jenerik `'state'` kanalı
-   * üzerinden bir "başarı" sinyali yayar. `source: 'NETWORK_XHR'`,
-   * `confidenceScore: 1` (ölçülmüş, kesin bir HTTP response — tahmini bir
-   * skor değil). `data` alanı domain-spesifik (latencyMs/statusCode/sourceUrl)
-   * — bu, `IStateObserver`'ın jenerik/domain-bağımsız kalması gerektiği
-   * kuralını ihlal etmez, çünkü tip zaten `Record<string, unknown>` olarak
-   * tanımlı (tüketici taraf — PersistentStateEngine — kendi bildiği alanları okur).
+   * Madde #22: `IStateObserver`'ın jenerik `'state'` kanalı üzerinden bir
+   * "başarı" sinyali yayar. `source: 'NETWORK_XHR'`, `confidenceScore: 1`
+   * (ölçülmüş, kesin bir HTTP response — tahmini bir skor değil). `data`
+   * alanı domain-spesifik (latencyMs/statusCode/sourceUrl) — bu,
+   * `IStateObserver`'ın jenerik/domain-bağımsız kalması gerektiği kuralını
+   * ihlal etmez, çünkü tip zaten `Record<string, unknown>` olarak tanımlı
+   * (tüketici taraf — PersistentStateEngine — kendi bildiği alanları okur).
    */
   private emitState(latencyMs: number, statusCode: number, sourceUrl: string): void {
     const payload: StatePayload & { data: Record<string, unknown> } = {

@@ -43,12 +43,23 @@ export interface StatePayload {
 
 /**
  * Gözlem sürecinde tespit edilebilecek anomali türleri.
+ *
+ * (Madde #33 — TAM KAPANIŞ) `PROCESS_CRASHED` ve `NETWORK_ERROR` eklendi.
+ * Bilinçli olarak governor tarafının (`src/types/governor-command.types.ts`)
+ * `AnomalyType.PAGE_CRASH`/`AnomalyType.NETWORK_FAILURE` isimleriyle AYNI
+ * isimler seçilmedi — bu iki `AnomalyType`'ın farklı sözleşmeler olduğu,
+ * isimlerden de anlaşılsın diye (iki farklı enum'u birbirine eşleyen tek
+ * yer `PersistentStateEngine.translateObserverAnomaly()`'dir). Her ikisi de
+ * jenerik/domain-bağımsız kavramlar — Playwright'a veya bir hedef siteye
+ * özgü değil, herhangi bir sayfa/ağ gözlemcisi için geçerli.
  */
 export type AnomalyType =
   | 'RATE_LIMIT_EXCEEDED'
   | 'ACCESS_RESTRICTED'
   | 'SESSION_EXPIRED'
-  | 'CHALLENGE_DETECTED';
+  | 'CHALLENGE_DETECTED'
+  | 'PROCESS_CRASHED'
+  | 'NETWORK_ERROR';
 
 /**
  * Bir anomalinin tüm bağlamsal bilgisini taşıyan payload.
