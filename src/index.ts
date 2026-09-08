@@ -3,12 +3,21 @@ import { AdvancedProxyManager } from './network/AdvancedProxyManager';
 import { AdaptiveGovernor } from './engine/AdaptiveGovernor';
 import { PersistentStateEngine } from './engine/PersistentStateEngine';
 import { DefaultAuthValidator } from './adapters/DefaultAuthValidator';
+import { ILogger } from './telemetry/ILogger';
+import { ConsoleJsonLogger } from './telemetry/ConsoleJsonLogger';
 
 export * from './types';
 export { AdvancedProxyManager } from './network/AdvancedProxyManager';
 export { AdaptiveGovernor } from './engine/AdaptiveGovernor';
 export { PersistentStateEngine } from './engine/PersistentStateEngine';
 export { DefaultAuthValidator } from './adapters/DefaultAuthValidator';
+// (Yeni — Madde #15) telemetry katmanı public API'ye eklendi — composition
+// root'lar kendi ILogger implementasyonlarını verebilir ya da bu varsayılanı
+// kullanabilir. NOT: EngineFactory/PersistentStateEngine'e logger enjekte
+// etme wiring'i bu turun KAPSAMI DIŞINDA — sadece export ediliyor, henüz
+// EngineFactoryOptions'a bağlanmadı (ayrı bir tur/onay gerektirir, Kural #5).
+export { ILogger, LogMeta } from './telemetry/ILogger';
+export { ConsoleJsonLogger } from './telemetry/ConsoleJsonLogger';
 
 export interface EngineFactoryOptions {
   proxies?: Array<{ server: string; username?: string; password?: string }>;
@@ -71,8 +80,12 @@ export class EngineFactory {
 }
 
 if (require.main === module) {
+  // (Yeni — Madde #15) Demo/main-entry bloğu artık düz console.* yerine
+  // merkezi ConsoleJsonLogger kullanıyor — diğer katmanlarla tutarlı.
+  const logger: ILogger = new ConsoleJsonLogger('MainEntry');
+
   (async () => {
-    console.log('[Main Entry] Endüstriyel Resilient Session Engine başlatılıyor...');
+    logger.info('Endüstriyel Resilient Session Engine başlatılıyor...');
     try {
       const { browser, engine } = await EngineFactory.createProductionEngine({
         headless: false,
@@ -96,16 +109,18 @@ if (require.main === module) {
       const page = engine.getPage();
       if (page) {
         await page.goto('https://bot.sannysoft.com/', { waitUntil: 'networkidle' });
-        console.log('[Main Entry] Hedef sayfa yüklendi ve motor aktif olarak izlemede.');
-        
+        logger.info('Hedef sayfa yüklendi ve motor aktif olarak izlemede.');
+
         await new Promise((resolve) => setTimeout(resolve, 30000));
       }
 
       await engine.close();
       await browser.close();
-      console.log('[Main Entry] Oturum başarıyla sonlandırıldı.');
+      logger.info('Oturum başarıyla sonlandırıldı.');
     } catch (error) {
-      console.error('[Main Entry] Kritik hata:', error);
+      logger.error('Kritik hata', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   })();
 }
