@@ -75,12 +75,24 @@
 //          görmüyor — sadece AnomalyPayload → SemanticAnomaly ÇEVİRİSİNİ
 //          yapıyor (translateObserverAnomaly, bu tur iki yeni case ile
 //          genişletildi). Madde #33 bu turda TAM KAPANDI.
+// (Yeni — Madde #15, bu tur) Opsiyonel `logger?: ILogger` 5. constructor
+//          parametresi eklendi — verilmezse `ConsoleJsonLogger('PersistentStateEngine')`
+//          varsayılan olur. Dosyadaki TÜM 7 `console.*` çağrısı (captureState,
+//          applyState, metrics-null uyarısı, rollback catch, translateObserverAnomaly
+//          default case, THROTTLE case, handleGovernorDecision catch)
+//          `this.logger.*`'a taşındı — format ProxyHealthStore ile aynı
+//          merkezi ConsoleJsonLogger'dan geliyor. NOT: bu tur öncesi bu
+//          dosya için çalıştırılan grep sadece 5 çağrı bulmuştu (261, 321,
+//          390, 443, 487) — gerçek dosyada 2 fazla çağrı (177, 212) olduğu
+//          bu turda tam dosya okunurken fark edildi, hepsi dahil edildi.
 
 import { Browser, BrowserContext, Page } from 'playwright';
 import { AdaptiveGovernor, GovernorDecisionEvent } from './AdaptiveGovernor';
 import { AdvancedProxyManager } from '../network/AdvancedProxyManager';
 import { PlaywrightPageObserver } from '../adapters/PlaywrightPageObserver';
 import { AnomalyPayload, StatePayload } from '../adapters/IStateObserver';
+import { ILogger } from '../telemetry/ILogger';
+import { ConsoleJsonLogger } from '../telemetry/ConsoleJsonLogger';
 import {
   PreservedSessionState,
   GovernorAction,
@@ -99,6 +111,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
   // Madde #32 (session identity modeli) ayrıca ele alınacak; bu, acquireProxy(sessionId)
   // için gereken minimum değer — kod tabanındaki mevcut ID üretim tarzıyla tutarlı.
   private readonly sessionId: string = Math.random().toString(36).substring(2, 15);
+  private readonly logger: ILogger;
   private preservedState: PreservedSessionState = {
     cookies: [],
     localStorage: {},
@@ -110,8 +123,10 @@ export class PersistentStateEngine implements RecoveryCommandPort {
     private browser: Browser,
     private proxyManager: AdvancedProxyManager,
     private governor: AdaptiveGovernor,
-    private authValidator: AuthValidationPort
+    private authValidator: AuthValidationPort,
+    logger: ILogger = new ConsoleJsonLogger('PersistentStateEngine')
   ) {
+    this.logger = logger;
     // Madde #7 tam kapanış: eski `.on('decision', ...)` yerine, kendimizi
     // resmi RecoveryCommandPort olarak kaydediyoruz. Bu, aynı kararın hem
     // legacy listener hem port üzerinden iki kez tetiklenmesi riskini
@@ -174,10 +189,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
         sessionStorage: storageData.ss
       };
     } catch (error) {
-      console.warn(
-        '[PersistentStateEngine] State yakalama sırasında hata oluştu — son bilinen iyi state korunacak:',
-        error
-      );
+      this.logger.warn('State yakalama sırasında hata oluştu — son bilinen iyi state korunacak', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return this.preservedState;
     }
   }
@@ -209,7 +223,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       // uygulamayı GERÇEKTEN authenticate edip etmediğini APPLY'dan SONRA,
       // ayrı bir adımda (authValidator.validate) doğruluyor — bkz.
       // createSessionWithFreshState.
-      console.warn('[PersistentStateEngine] State re-hydration sırasında hata oluştu:', error);
+      this.logger.warn('State re-hydration sırasında hata oluştu', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -258,9 +274,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       if (!metrics) {
         // Sahte veri/sessiz fallback yasak (Madde 22) — bu durum context'in
         // proxy'siz kurulacağı anlamına gelir, sessizce geçilmez.
-        console.warn(
-          `[PersistentStateEngine] Lease alındı (proxyId=${newLease.proxyId}) ama getProxyMetrics() sonuç döndürmedi — context proxy'siz kurulacak.`
-        );
+        this.logger.warn("Lease alındı ama getProxyMetrics() sonuç döndürmedi — context proxy'siz kurulacak", {
+          proxyId: newLease.proxyId,
+        });
       }
 
       const proxyOptions = metrics ? {
@@ -318,10 +334,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
       // Bu dal, Madde #9 ile eklenen AuthRestoreFailedError için de aynı
       // şekilde çalışır — validate() COMMIT'ten önce çağrıldığı için buraya
       // düşen bir doğrulama hatası da diğer adım hataları gibi rollback edilir.
-      console.error(
-        '[PersistentStateEngine] Recovery transaction başarısız oldu, önceki oturum korunuyor:',
-        error
-      );
+      this.logger.error('Recovery transaction başarısız oldu, önceki oturum korunuyor', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (newContext) {
         await newContext.close().catch(() => {});
       }
@@ -387,9 +402,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
         // IStateObserver jenerik bir sözleşme olduğu için ileride başka bir
         // observer bunları emit edebilir. O durumda sessizce yutmak Madde 22
         // ihlali olur — açıkça logla, hiçbir şey enqueue etme.
-        console.warn(
-          `[PersistentStateEngine] PlaywrightPageObserver'dan beklenmeyen/henüz eşlenmemiş anomaly type: ${payload.type} — enqueue edilmedi.`
-        );
+        this.logger.warn("PlaywrightPageObserver'dan beklenmeyen/henüz eşlenmemiş anomaly type — enqueue edilmedi", {
+          anomalyType: payload.type,
+        });
         return;
     }
 
@@ -440,7 +455,7 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           if (this.currentLease) {
             this.proxyManager.markFailed(this.currentLease.proxyId, 'HTTP_429');
           }
-          console.log(`[PersistentStateEngine] Throttle uygulandı. Bekleniyor...`);
+          this.logger.info('Throttle uygulandı, bekleniyor');
           await new Promise(res => setTimeout(res, 10000));
           break;
 
@@ -484,7 +499,9 @@ export class PersistentStateEngine implements RecoveryCommandPort {
           break;
       }
     } catch (error) {
-      console.error('[PersistentStateEngine] Recovery sırasında kritik hata:', error);
+      this.logger.error('Recovery sırasında kritik hata', {
+        error: error instanceof Error ? error.message : String(error),
+      });
 
       // Madde #9: createSessionWithFreshState() APPLY→COMMIT arasında bir
       // AuthRestoreFailedError fırlattıysa, rollback zaten tamamlanmış olur
