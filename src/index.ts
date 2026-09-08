@@ -77,6 +77,28 @@ export class EngineFactory {
       engine
     };
   }
+
+  /**
+   * (Yeni — Madde #24) Engine + browser'ı tek, güvenli bir dispose
+   * sözleşmesinde kapatır. Önceden main-entry bloğu bu ikisini ayrı ayrı,
+   * try/finally OLMADAN çağırıyordu — `engine.close()` throw ederse
+   * `browser.close()` hiç çalışmıyor, browser process açık kalıyordu.
+   * `engine.close()` artık idempotent olduğu için (bkz. PersistentStateEngine
+   * Madde #24) burada çift-close riski de yok.
+   */
+  public static async disposeEngine({
+    browser,
+    engine
+  }: {
+    browser: Browser;
+    engine: PersistentStateEngine;
+  }): Promise<void> {
+    try {
+      await engine.close();
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  }
 }
 
 if (require.main === module) {
@@ -114,8 +136,9 @@ if (require.main === module) {
         await new Promise((resolve) => setTimeout(resolve, 30000));
       }
 
-      await engine.close();
-      await browser.close();
+      // (Madde #24) engine.close()/browser.close() artık ayrı ayrı, korumasız
+      // çağrılmıyor — bkz. EngineFactory.disposeEngine.
+      await EngineFactory.disposeEngine({ browser, engine });
       logger.info('Oturum başarıyla sonlandırıldı.');
     } catch (error) {
       logger.error('Kritik hata', {
