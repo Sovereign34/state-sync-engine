@@ -39,3 +39,11 @@ Faz 4: Zamanlama ve Polling Motoru (Slot Tespiti)
 Faz 5: WAF, Captcha ve Kritik İşlem Hattı (Commit Pipeline)
  * Harici Çözüm Entegrasyonları: Gerekli durumlarda CAPTCHA veya doğrulama adımlarını aşmak için adaptör katmanına harici çözüm servislerinin bağlanması.
  * Commit State Akışı: Tespit edilen slotun APPLY -> Validation -> COMMIT adımlarıyla, oturum bütünlüğü bozulmadan en hızlı şekilde rezerve edilmesi.
+----
+Eklenmesi Önerilen Kritik Başlıklar
+Mevcut yol haritasına operasyonel güvenlik, hata yönetimi ve otomasyon kararlılığı açısından şu kritik maddeleri de eklemek, sistemin canlıda (production) kesintiye uğramasını önlemek için oldukça faydalı olacaktır:
+ * Simülasyon / Dry-Run Modu: Hedef sistemde gerçek rezervasyon (commit) adımını tetiklemeden önce adaptörün form doldurma, element seçimi ve DOM okuma mantığını test eden güvenli bir "kuru sıkı" test modu.
+ * Anlık Bildirim ve Telemetri Köprüsü: ConsoleJsonLogger yapısına ek olarak, kritik bir slot bulunduğunda, proxy havuzu tükendiğinde veya HTTP_429 blokları tavan yaptığında Telegram/Discord üzerinden anlık uyarı alacak bir webhook entegrasyonu.
+ * Devre Kesici (Circuit Breaker) ve DOM Değişiklik Algılama: Hedef sitenin arayüzünde (DOM) yapısal bir güncelleme yapıldığında adaptörün hatalı veri girmesini veya sonsuz döngüye girmesini engelleyen otomatik durdurma emniyeti.
+ * Çoklu Hesap ve Profil Segmentasyonu: Her bir hedef hesabın çerezleri, oturum bilgileri ve parmak izlerinin ProxyCredentialStore ile birebir eşleştirilerek cross-contamination (oturum karışması) riskinin tamamen ortadan kaldırılması.
+Bu eklemeleri de içeren nihai yol haritasını doğrudan GEMINI_NOTES.md veya SESSION_INDEX.md dosyasına işleyerek bir sonraki oturumda kaldığın yerden tam bağlamla devam edebilirsin.
