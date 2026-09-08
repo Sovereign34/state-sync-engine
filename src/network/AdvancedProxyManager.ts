@@ -3,8 +3,10 @@
 //          proxy'yi bir lease ile "meşgul" işaretleyerek paralel session'ların
 //          aynı proxy'yi paylaşmasını engeller (Madde #5). Opsiyonel olarak
 //          proxy listesini (server + credential) bir ProxyCredentialStore
-//          üzerinden restart'lar arasında kalıcı hale getirir (Madde #2'nin
-//          onaylanmış minimal dilimi + Madde #13 — credential encryption-at-rest).
+//          üzerinden restart'lar arasında kalıcı hale getirir (Madde #13 —
+//          credential encryption-at-rest) ve opsiyonel olarak health/quarantine
+//          metriklerini bir ProxyHealthStore üzerinden kalıcı hale getirir
+//          (Madde #2 — bu turda tamamlanan geri kalan dilim).
 // Katman:  network
 // Risk:    Lease mekanizması bozulursa iki session aynı proxy'yi paralel
 //          kullanabilir (orijinal Madde #5 sorunu geri döner) veya expire
@@ -14,29 +16,38 @@
 //          API'sine çıplak ulaşabilir — getProxyMetrics() ise BİLİNÇLİ olarak
 //          credential'lı kalır (bkz. Dokunma), çünkü PersistentStateEngine
 //          gerçek proxy bağlantısı için ona ihtiyaç duyar; bu ikisini
-//          KARIŞTIRMAMAK bu dosyanın en kritik kuralı. (Yeni) credentialStore
+//          KARIŞTIRMAMAK bu dosyanın en kritik kuralı. credentialStore
 //          verilirse ve registerProxy() dışında bir yerden yazma tetiklenirse
-//          (örn. health metriklerini de persist etme girişimi) bu, kararlaştırılan
-//          edge-case #4'ü (SADECE registerProxy()'de yazma) ihlal eder — bilinçli
-//          bir sınır, genişletmek ayrı bir [KARAR BİLDİRİMİ] gerektirir.
+//          (örn. health metriklerini de credential tablosuna persist etme
+//          girişimi) bu, kararlaştırılan edge-case #4'ü (SADECE
+//          registerProxy()'de credential yazması) ihlal eder — bilinçli bir
+//          sınır. (Yeni — Madde #2) `healthStore` verilirse `markFailed()`
+//          quarantineUntil güncellediği ANDA health snapshot'ı persist eder;
+//          bu yazma BEST-EFFORT'tur (throw etmez) — credential yazmasıyla
+//          (fail-closed loadAll, best-effort değil) KARIŞTIRILMAMALI, ikisi
+//          bilerek FARKLI hata toleransına sahip (health kritik değil,
+//          credential kritik).
 // Dokunma: `ProxyLease` tipi (types/index.ts) ve bu sınıfı kullanan her yer
 //          (şu an yalnızca src/engine/PersistentStateEngine.ts — hem
 //          `acquireProxy()` hem de credential için `getProxyMetrics()`
 //          çağırıyor, satır ~218). `PublicProxyMetrics` tipi
 //          (types/governor-command.types.ts) — Madde #23 ile SADECE
 //          `getAllMetrics()` bu tipi döner. `getProxyMetrics()` ham
-//          `ProxyMetrics`'i (credential dahil) dönmeye DEVAM EDER — bu bir
-//          önceki turda yanlışlıkla `PublicProxyMetrics`'e çevrilip
-//          `src/index.ts`/`PersistentStateEngine.ts` derlemesini kırmıştı
-//          (`tsc --noEmit` ile yakalandı), bu tur o hatayı düzeltiyor.
-//          (Yeni) `ProxyCredentialStore` (src/state/) — constructor'a opsiyonel
+//          `ProxyMetrics`'i (credential dahil) dönmeye DEVAM EDER.
+//          `ProxyCredentialStore` (src/state/) — constructor'a opsiyonel
 //          3. parametre olarak enjekte edilir; bu sınıf ASLA doğrudan
 //          `SecretProvider` import etmez (şifreleme detayı state katmanında
-//          kapsüllenmiş kalmalı, network katmanı sadece "kaydet/yükle" arayüzünü
-//          bilir — katman ayrımı, KOD KALİTESİ #1).
+//          kapsüllenmiş kalmalı, network katmanı sadece "kaydet/yükle"
+//          arayüzünü bilir — katman ayrımı, KOD KALİTESİ #1). (Yeni —
+//          Madde #2) `ProxyHealthStore` (src/state/) — constructor'a
+//          opsiyonel 4. parametre olarak enjekte edilir; credential ile AYNI
+//          DB dosyasını paylaşması beklenir ama composition-root'ta bu
+//          henüz görülmedi (Madde #13'ün açık kapsam-dışı takibiyle aynı
+//          nokta — dbPath'lerin senkron verilmesi gerekiyor).
 
 import { ProxyMetrics, ProxyLease, PublicProxyMetrics } from '../types';
 import { ProxyCredentialStore } from '../state/ProxyCredentialStore';
+import { ProxyHealthStore } from '../state/ProxyHealthStore';
 
 // Lease süresi dolduğunda otomatik reclaim edilir (crash/unclean-shutdown
 // senaryosu için güvenlik ağı). Kalıcı transaction modeli Madde #8 ile gelecek;
@@ -51,17 +62,24 @@ export class AdvancedProxyManager {
   // proxyId (server) -> leaseId (bir proxy'nin şu an leased olup olmadığını O(1) kontrol için)
   private leasedProxyIds: Map<string, string> = new Map();
 
-  // (Yeni) Opsiyonel — verilmezse davranış tamamen eskisi gibi kalır (sadece
+  // Opsiyonel — verilmezse davranış tamamen eskisi gibi kalır (sadece
   // in-memory), verilirse Madde #2/#13 kalıcılığı devreye girer.
   private readonly credentialStore?: ProxyCredentialStore;
 
+  // (Yeni — Madde #2) Opsiyonel — verilmezse health/quarantine sadece
+  // bellekte kalır (eskisi gibi). Verilirse markFailed() karantina
+  // tetiklendiğinde snapshot'ı best-effort persist eder.
+  private readonly healthStore?: ProxyHealthStore;
+
   constructor(
     initialProxies: Array<{ server: string; username?: string; password?: string }> = [],
-    credentialStore?: ProxyCredentialStore
+    credentialStore?: ProxyCredentialStore,
+    healthStore?: ProxyHealthStore
   ) {
     this.credentialStore = credentialStore;
+    this.healthStore = healthStore;
 
-    // (Yeni) Kalıcı kayıtlar ÖNCE yüklenir — registerProxy() ÇAĞRILMADAN,
+    // Kalıcı credential kayıtları ÖNCE yüklenir — registerProxy() ÇAĞRILMADAN,
     // yani bu adım hiçbir DB yazmasına yol açmaz (kararlaştırılan edge-case #4:
     // yazma SADECE registerProxy()'de). loadAll() fail-closed'dır (bkz.
     // ProxyCredentialStore) — bir kayıt bile bozuksa burada throw eder ve
@@ -82,13 +100,40 @@ export class AdvancedProxyManager {
     for (const proxy of initialProxies) {
       this.registerProxy(proxy.server, proxy.username, proxy.password);
     }
+
+    // (Yeni — Madde #2) Health hydration EN SONA bırakılır — bu noktada
+    // proxy kimlikleri (server listesi) hem DB'den hem initialProxies'ten
+    // tam olarak kurulmuş durumda. loadAll() zaten TTL uygulayıp stale
+    // kayıtları eleyerek döner (bkz. ProxyHealthStore). Map'te karşılığı
+    // olmayan bir health kaydı (ör. proxy config'ten çıkarılmış) sessizce
+    // ATLANIR — orphan kayıt için yeni bir proxy entry'si YARATILMAZ, çünkü
+    // credential/initialProxies zaten "hangi proxy'lerin var olduğunun" TEK
+    // kaynağıdır (health kalıcılığı bu kararı geçersiz kılamaz).
+    if (this.healthStore) {
+      const persistedHealth = this.healthStore.loadAll();
+      for (const health of persistedHealth) {
+        const metrics = this.proxies.get(health.server);
+        if (!metrics) continue;
+
+        metrics.latencyMs = health.latencyMs;
+        metrics.dnsFailures = health.dnsFailures;
+        metrics.tlsFailures = health.tlsFailures;
+        metrics.http403Count = health.http403Count;
+        metrics.http429Count = health.http429Count;
+        metrics.successCount = health.successCount;
+        metrics.failureCount = health.failureCount;
+        metrics.lastUsed = health.lastUsed;
+        metrics.quarantineUntil = health.quarantineUntil;
+      }
+    }
   }
 
   /**
-   * (Yeni) Map'e ekleme mantığının tek kaynağı. Sadece gerçekten YENİ bir
+   * Map'e ekleme mantığının tek kaynağı. Sadece gerçekten YENİ bir
    * proxy eklenip eklenmediğini döner — registerProxy() bu bilgiyi DB
-   * yazmasını tetikleyip tetiklememek için kullanır. DB'ye ASLA burada
-   * yazılmaz (constructor'ın loadAll() yolu bu metodu DB yazmadan kullanır).
+   * yazmasını tetikleyip tetiklememek için kullanır. Credential DB'ye ASLA
+   * burada yazılmaz (constructor'ın loadAll() yolu bu metodu DB yazmadan
+   * kullanır).
    */
   private addProxyToMap(server: string, username?: string, password?: string): boolean {
     if (this.proxies.has(server)) return false;
@@ -113,9 +158,10 @@ export class AdvancedProxyManager {
   public registerProxy(server: string, username?: string, password?: string): void {
     const isNewProxy = this.addProxyToMap(server, username, password);
 
-    // (Yeni) Kararlaştırılan edge-case #4: DB yazması SADECE burada, SADECE
-    // proxy gerçekten yeni eklenmişken tetiklenir. Zaten kayıtlı bir proxy
-    // için (eskisi gibi) hiçbir şey olmaz — ne map güncellenir ne DB'ye yazılır.
+    // Kararlaştırılan edge-case #4: credential DB yazması SADECE burada,
+    // SADECE proxy gerçekten yeni eklenmişken tetiklenir. Zaten kayıtlı bir
+    // proxy için (eskisi gibi) hiçbir şey olmaz — ne map güncellenir ne DB'ye
+    // yazılır.
     if (isNewProxy && this.credentialStore) {
       this.credentialStore.save(server, username, password);
     }
@@ -200,6 +246,12 @@ export class AdvancedProxyManager {
     metrics.latencyMs = metrics.latencyMs === 0 
       ? latencyMs 
       : Math.round(metrics.latencyMs * 0.7 + latencyMs * 0.3);
+
+    // (Madde #2 kararlaştırılan yazma stratejisi) recordSuccess() ARA
+    // güncellemeleri BİLEREK persist edilmiyor — sadece markFailed()'in
+    // karantina tetiklediği anlar yazılıyor. Restart sonrası successCount
+    // bir miktar "geride" kalabilir, bu kabul edilen bir trade-off (bkz.
+    // KARAR BİLDİRİMİ açık varsayımları).
   }
 
   public markFailed(server: string, failureType: 'HTTP_403' | 'HTTP_429' | 'DNS_FAIL' | 'TLS_FAIL' | 'NETWORK_FAIL'): void {
@@ -236,6 +288,30 @@ export class AdvancedProxyManager {
       default:
         metrics.quarantineUntil = now + 45000;
         break;
+    }
+
+    // (Yeni — Madde #2) Kararlaştırılan yazma stratejisi: health persist
+    // SADECE burada, quarantineUntil güncellendiği ANDA tetiklenir
+    // (write-through değil). Credential alanları (username/password)
+    // BİLEREK bu snapshot'a dahil edilmez — ProxyHealthStore.save()'in tip
+    // imzası (`PersistedProxyHealth`) zaten credential alanlarını kabul
+    // etmiyor, bu satırda ayrıca elle filtrelemeye gerek yok ama yine de
+    // açıkça listelenmesi (spread değil) credential sızıntısını derleme
+    // zamanında imkânsız kılıyor (Madde #23 disiplini, bu dosyanın
+    // getAllMetrics()/getProxyMetrics() ayrımıyla aynı prensip).
+    if (this.healthStore) {
+      this.healthStore.save({
+        server: metrics.server,
+        latencyMs: metrics.latencyMs,
+        dnsFailures: metrics.dnsFailures,
+        tlsFailures: metrics.tlsFailures,
+        http403Count: metrics.http403Count,
+        http429Count: metrics.http429Count,
+        successCount: metrics.successCount,
+        failureCount: metrics.failureCount,
+        lastUsed: metrics.lastUsed,
+        quarantineUntil: metrics.quarantineUntil,
+      });
     }
   }
 
