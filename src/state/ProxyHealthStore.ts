@@ -28,9 +28,18 @@
 //          `ProxyCredentialStore.ts` ile composition-root'ta `dbPath`
 //          senkron tutulmalı (ikisi aynı yolu almalı, aksi hâlde iki ayrı
 //          SQLite dosyası oluşur ve health/credential birbirinden kopar).
+//          (Yeni — Madde #15) Opsiyonel `logger?: ILogger` 2. parametre
+//          eklendi — verilmezse `ConsoleJsonLogger('ProxyHealthStore')`
+//          varsayılan olur (bkz. `../telemetry/ILogger`,
+//          `../telemetry/ConsoleJsonLogger`). Eskiden burada elle üretilen
+//          `{"level","component","message",...}` JSON'ı artık bu sınıf
+//          tarafından merkezi olarak üretiliyor — çıktı ŞEKLİ DEĞİŞMEDİ,
+//          sadece üretim yeri merkezileşti.
 
 import Database from 'better-sqlite3';
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { ILogger } from '../telemetry/ILogger';
+import { ConsoleJsonLogger } from '../telemetry/ConsoleJsonLogger';
 
 export interface PersistedProxyHealth {
   server: string;
@@ -52,9 +61,11 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class ProxyHealthStore {
   private readonly db: DatabaseType;
+  private readonly logger: ILogger;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, logger: ILogger = new ConsoleJsonLogger('ProxyHealthStore')) {
     this.db = new Database(dbPath);
+    this.logger = logger;
     this.ensureSchema();
   }
 
@@ -112,15 +123,10 @@ export class ProxyHealthStore {
           Date.now()
         );
     } catch (err) {
-      console.error(
-        JSON.stringify({
-          level: 'error',
-          component: 'ProxyHealthStore',
-          message: 'health kaydı yazılamadı — best-effort, in-memory state etkilenmedi',
-          server: health.server,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      );
+      this.logger.error('health kaydı yazılamadı — best-effort, in-memory state etkilenmedi', {
+        server: health.server,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -151,14 +157,9 @@ export class ProxyHealthStore {
         )
         .all() as Array<PersistedProxyHealth & { updated_at: number }>;
     } catch (err) {
-      console.error(
-        JSON.stringify({
-          level: 'error',
-          component: 'ProxyHealthStore',
-          message: 'health kayıtları okunamadı — hydration atlanıyor, motor sıfır health ile başlıyor',
-          error: err instanceof Error ? err.message : String(err),
-        })
-      );
+      this.logger.error('health kayıtları okunamadı — hydration atlanıyor, motor sıfır health ile başlıyor', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return [];
     }
 
