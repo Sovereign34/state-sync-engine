@@ -511,3 +511,110 @@ dosya bırakılmadı).
   tutarlılık tercih edildi; opsiyonel/varsayılan enjeksiyon deseni değişmeden
   uygulandı ve testlerle doğrulandı.
 
+------
+## TAŞIMA 6 (Session 3) — Madde #24, #25 tam kapanış anlatıları
+
+> Gerekçe: SESSION_INDEX.md 400 satır eşiği Madde #27'nin kapanışıyla
+> (beşinci kez) aşıldı. CORE.md §7.1 gereği, artık kapanmış/tamamlanmış
+> içerik (Madde #24 ve #25'in ANLIK DURUM + Kritik Teknik Kararlar +
+> Kapanan Maddeler Geçmişi'ndeki üç kopyası, ve bu ikisine ait iki eski
+> oturum-sonu notu) TAM METİN olarak buraya taşındı. Hiçbir içerik
+> silinmedi/özetlenmedi — SESSION_INDEX.md'de artık sadece tek satırlık
+> referanslar var.
+
+---
+
+### Madde #24 — Engine lifecycle (start/stop/dispose): TAM KAPANDI (Session 3)
+
+`lifecycleState: 'created' | 'ready' | 'closing' | 'closed'` guard'ı eklendi —
+`initialize()` artık 'created' dışında throw ediyor (çift initialize
+engellendi); `handleDecision()` artık 'ready' dışında no-op + warn log
+yapıyor (governor kararları guard'lı).
+
+**GERÇEK BULGU (tespit bu maddeyi açtı):** `attachLifecycleObservers()` her
+çağrıldığında yeni bir `PlaywrightPageObserver` kuruyordu ama referans
+hiçbir instance alanında saklanmıyordu — leak sadece `close()`'da değil HER
+recovery rotasyonunda oluşuyordu. Artık `this.observer` alanında
+saklanıyor; yeni observer kurulmadan ÖNCE eskisi `stop()` ediliyor.
+`close()` artık idempotent (ikinci çağrı no-op), `context`/`page`
+kapanıştan sonra `undefined`'a çekiliyor (stale referans riski kapatıldı —
+`getPage()`/`getContext()` artık kapalı bir context/page döndürmüyor).
+`index.ts`'e `EngineFactory.disposeEngine()` eklendi — engine/browser'ı
+try/finally ile güvenli kapatıyor (önceden `engine.close()` throw ederse
+`browser.close()` hiç çalışmıyordu), main-entry bloğu buna geçirildi.
+`governor.setCommandPort` kaydına BİLİNÇLİ OLARAK dokunulmadı (KARAR
+BİLDİRİMİ'nin kapsam sınırı).
+
+**Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, gerçek Codespace
+ortamında, tam repo, **sıfır hata**; (2) kapsam — diff ile değişikliğin
+sadece onaylanan iki dosyaya (`PersistentStateEngine.ts`, `index.ts`)
+sınırlı kaldığı teyit edildi, Governor/ProxyManager'a dokunulmadı; (3)
+runtime — smoke-test (`tsx` ile; `ts-node@10.9.2`'nin Node 24 ile bilinen
+bir config-okuma uyumsuzluğu nedeniyle `tsx`'e geçildi) çift
+`initialize()`'ın throw ettiğini ve çift `close()`'un sessizce no-op
+olduğunu doğruladı — **ikisi de PASS**. Madde P1 tablosundan kaldırıldı.
+
+---
+
+### Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI (Session 3)
+
+Guard mantığı, main-entry closure'ından bağımsız, enjekte edilebilir
+`disposeEngine`/`exit` alan `createShutdownController()` fonksiyonuna
+çıkarıldı (izole test edilebilirlik için) — `index.ts`'ten export ediliyor.
+`shutdown(signal, logger)` idempotent: ilk çağrı `disposeEngine()`'i
+çağırıp `exit(0)` çağırır, sonraki her çağrı (çift sinyal ya da
+normal-akış-sonrası bir sinyal) no-op'tur. `markDisposed()`, normal akışın
+(30sn bekleme sonu) kendi dispose'unu yaptığı durumda aynı guard'ı
+senkronize eder. Main-entry, `process.on('SIGTERM'|'SIGINT', ...)` ile bu
+controller'a bağlandı; `browser`/`engine` referansları sinyal
+handler'ının erişebileceği dış scope'ta tutuluyor, `createProductionEngine()`
+dönmeden bir sinyal gelirse (referanslar hâlâ `undefined`) hiçbir şey
+dispose edilmeden no-op geçiliyor.
+
+**Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo, **sıfır
+hata**; (2) kapsam — sadece `index.ts` (main-entry bloğu + yeni export)
+değişti, `PersistentStateEngine.ts`'e bu turda hiç dokunulmadı; (3) runtime
+— `runtime-check-shutdown.ts` (repo kökünde, diğer `runtime-check-*.ts`
+dosyalarıyla aynı konvansiyonda; ilk taslak yanlışlıkla `scripts/` altına
+konup import yolu kırılmıştı, düzeltildi) ile **4/4 PASS** (ilk shutdown
+dispose+exit(0), çift sinyal no-op, `markDisposed()` sonrası sinyal no-op,
+opsiyonel `exit` parametresi).
+
+**Kapsam dışı bırakılan açık gözlem (madde değil):** Codespace'te gerçek bir
+`kill -TERM` denemesinde `chromium.launch()` dbus soket hatasıyla başarısız
+oldu ve `main-entry`'nin `catch` bloğu bunu "Kritik hata" olarak loglayıp
+**`process.exitCode` ayarlamadan** (varsayılan 0 ile) çıktı — bu, Madde
+#25'in kapsamı dışında, main-entry'nin hata yolunda önceden var olan ayrı
+bir bulgu; gerçek sinyal iletiminin (`npx tsx ... &` ile `$!`'in gerçek
+node process'i mi yoksa `npx` wrapper'ı mı olduğu) ve Codespace'te headless
+Chromium'un dbus'suz çalışması gerektiğinin ayrıca doğrulanması gerekiyor —
+deploy (Fly.io) öncesi ele alınmalı, bu turda yeni bir madde açılmadı.
+Madde P1 tablosundan kaldırıldı.
+
+---
+
+### Eski oturum-sonu notları (arşive taşındı, SESSION_INDEX'ten kaldırıldı)
+
+*Not (Session 3, önceki tur — Taşıma 5 + Madde #24 kapanışı): `PersistentState
+Engine.ts`'e `lifecycleState` guard'ı + observer dispose fix'i, `index.ts`'e
+`EngineFactory.disposeEngine()` eklendi — `tsc --noEmit` (tam repo, EXIT
+CODE: 0), kapsam-sınırlı diff ve `tsx` runtime smoke-test (çift
+initialize/close PASS) ile üç kanıtla doğrulandı. **Madde #24 TAM KAPANDI ve
+P1 tablosundan kaldırıldı.** Aynı turda SESSION_INDEX.md 400 satır eşiğini
+dördüncü kez aştığı için Madde #22/#13/#33/#2/#15'in tam metinli kapanış
+anlatıları `TASIMA_5.md` bloğu olarak ayrıca verildi — `session_arşiv.md`'ye
+eklendiği varsayılıyor (bkz. push kaydı, bir sonraki session'da
+`session_arşiv.md`'nin kendisi görülünce kesin teyit edilecek).*
+
+*Not (Session 3, önceki tur — Madde #25 kapanışı): Graceful shutdown guard
+mantığı `createShutdownController()` olarak `index.ts`'ten export edilen
+izole bir fonksiyona çıkarıldı, main-entry `SIGTERM`/`SIGINT` handler'ları
+buna bağlandı. `tsc --noEmit` (tam repo, PASS), kapsam-sınırlı diff (sadece
+`index.ts`) ve `runtime-check-shutdown.ts` (repo kökünde, 4/4 PASS) ile üç
+kanıtla doğrulandı. **Madde #25 TAM KAPANDI ve P1 tablosundan kaldırıldı.**
+Kapsam dışı bırakılan açık gözlem: main-entry `catch` bloğu hata durumunda
+`process.exitCode` ayarlamıyor + gerçek OS sinyal iletimi/Codespace'te
+headless Chromium'un dbus bağımlılığı henüz doğrulanmadı — yeni madde açılıp
+açılmayacağı kullanıcı kararına bırakıldı. P0 tablosunda hâlâ sadece **#9**
+kalıyor (ertelenmiş, aktif çalışılmıyor). Sıradaki adım kullanıcının
+tercihine bağlı (bkz. Sıradaki Öncelik).*
