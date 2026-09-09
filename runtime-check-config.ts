@@ -123,30 +123,37 @@ function testDeepFreezeActuallyPreventsMutation(): void {
   assert(Object.isFrozen(c.proxy.quarantine), 'TEST 5 — quarantine alt-objesi frozen');
   assert(Object.isFrozen(c.proxy.healthScore), 'TEST 5 — healthScore alt-objesi frozen');
 
-  // Gerçek ESM modülü = spesifikasyon gereği strict mode. Frozen bir property'ye
-  // atama sloppy mode'da SESSİZCE no-op olur, strict mode'da throw eder.
-  // Önceki `tsx -e` inline testinde throw ETMEMİŞTİ — burada gerçek .ts
-  // dosyası + gerçek import ile bu varsayımı yeniden test ediyoruz.
-  let rootMutationThrew = false;
+  // DÜZELTME (doğrulama turu sonrası): Bu proje tsconfig.json'da
+  // "module": "node16" kullanıyor ve package.json'da "type": "module" YOK
+  // — yani derlenmiş çıktı CommonJS, ve CJS modülleri varsayılan olarak
+  // strict mode'da DEĞİLDİR. Bu nedenle frozen bir property'ye atama throw
+  // ETMEZ (spec'e göre beklenen budur) — asıl sözleşme throw değil, değerin
+  // GERÇEKTEN değişmemesidir. Throw bilgi amaçlı loglanır, PASS/FAIL şartı
+  // değildir; asıl şart "before === after".
+  const leaseBefore = c.proxy.leaseDurationMs;
+  let rootThrew = false;
   try {
     (c.proxy as { leaseDurationMs: number }).leaseDurationMs = 1;
   } catch {
-    rootMutationThrew = true;
+    rootThrew = true;
   }
+  console.log(`  (bilgi) proxy.leaseDurationMs ataması throw etti mi: ${rootThrew}`);
   assert(
-    rootMutationThrew && c.proxy.leaseDurationMs === 300000,
-    'TEST 5 — proxy.leaseDurationMs mutasyonu throw etti VE değer değişmedi'
+    c.proxy.leaseDurationMs === leaseBefore,
+    'TEST 5 — proxy.leaseDurationMs mutasyon denemesi sonrası değer GERÇEKTEN değişmedi'
   );
 
-  let nestedMutationThrew = false;
+  const http403Before = c.proxy.quarantine.http403BaseMs;
+  let nestedThrew = false;
   try {
     (c.proxy.quarantine as { http403BaseMs: number }).http403BaseMs = 1;
   } catch {
-    nestedMutationThrew = true;
+    nestedThrew = true;
   }
+  console.log(`  (bilgi) quarantine.http403BaseMs ataması throw etti mi: ${nestedThrew}`);
   assert(
-    nestedMutationThrew && c.proxy.quarantine.http403BaseMs === 120000,
-    'TEST 5 — quarantine.http403BaseMs mutasyonu throw etti VE değer değişmedi (iç içe freeze)'
+    c.proxy.quarantine.http403BaseMs === http403Before,
+    'TEST 5 — quarantine.http403BaseMs mutasyon denemesi sonrası değer GERÇEKTEN değişmedi (iç içe freeze)'
   );
 
   clearEnv();
