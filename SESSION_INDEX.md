@@ -10,7 +10,43 @@
 
 ## ⚡ ANLIK DURUM
 
-- **Session:** 3 (devam ediyor)
+- **Session:** 4 (devam ediyor)
+- **(Yeni) Madde #37 — Deploy hedefi netleştirme + native-modül smoke testi:
+  AÇILDI, AKTİF ÖNCELİK (Session 4).** Gerekçe: gerçek zip repo'su
+  incelenirken (kullanıcı isteğiyle) şu somut blokerler bulundu — hiçbiri
+  daha önce SESSION_INDEX'te ayrı bir madde olarak takip edilmiyordu:
+  - `better-sqlite3` (`ProxyCredentialStore.ts`, `ProxyHealthStore.ts`
+    tarafından import ediliyor) `package.json`'da **hiç yok** — repo temiz
+    klonlanıp `npm install` yapılırsa çalışmaz.
+  - `package.json`'da `scripts` alanı yok — build/start/test için tek
+    komut tanımsız.
+  - `src/index.ts`'te gerçek `// TODO` placeholder: `validationUrl:
+    'https://your-app.example.com/dashboard'` — production'a bu haliyle
+    çıkarsa auth validation kırılır.
+  - Deploy hedefi (Fly.io "aday") hiç somutlaşmamış — Dockerfile/fly.toml
+    yok, CI (`.github/`) yok, `.env` şablonu yok.
+  **Kapsam (bu turda üzerinde anlaşılan, henüz UYGULANMADI):**
+  (a) `better-sqlite3`'ü `package.json`'a eklemek + temiz klonda kurulup
+  derlendiğini teyit etmek; (b) deploy hedefini kesinleştirip minimal bir
+  "hello world" smoke deploy yapmak — amaç sadece native modüllerin
+  (`better-sqlite3` + Playwright headless Chromium) o ortamda ayağa
+  kalktığını görmek, gerçek feature deploy'u değil. Gerçek test framework'ü
+  (jest/vitest) + CI kurulumu **kasıtlı olarak bu maddeye dahil edilmedi**
+  — Madde #9'un ertelenen entegrasyon testiyle aynı ana denk getirilmesi
+  öneriliyor (Kural #5: kapsamı şişirmeme).
+  **Fly.io güncel durum araştırması (Session 4, web_search ile
+  doğrulandı):** Resmi `fly.io/pricing/` sayfası artık "No plans and no
+  tiers" diyor — genel bir ücretsiz katman YOK, tamamen kullanım bazlı
+  (saniye bazlı) faturalama. Yeni hesaplar için ücretsiz kalıcı katman
+  2024 sonunda kaldırıldı; yeni kayıtlar kısa bir deneme süresiyle
+  başlıyor, sonrasında kredi kartı zorunlu. Resmi maliyet örneği: en küçük
+  `shared-1x 256MB` makine her zaman açık kalırsa ~$2.32/ay; bu projenin
+  ihtiyacı (Playwright headless Chromium + `better-sqlite3` için kalıcı
+  volume) 256MB'ın muhtemelen yetmeyeceği için gerçekçi tahmin **$5-15+/ay**
+  aralığında. İlk 10GB snapshot depolama ücretsiz. **Kesinleşmemiş karar:**
+  Fly.io'nun ücretsiz bir seçenek SUNMADIĞI netleşti — kullanıcının bunu
+  bilerek mi devam edeceği, yoksa ücretsiz alternatif (ör. Render free
+  tier, sadece statik/uyku modlu) mi araştırılacağı henüz kararlaştırılmadı.
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
   - **Madde #1, #5, #6, #7, #8, #9 (alt-bug), #23, #22, #13, #33, #2, #15 —
@@ -27,108 +63,35 @@
     özet: `createShutdownController()` izole guard fonksiyonu, main-entry
     `SIGTERM`/`SIGINT`'e bağlandı.
   - **(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
-    KAPANDI (Session 3).** `src/config/Config.ts` (sözleşme: `Config`,
-    `ProxyConfig`, `ProxyQuarantineConfig`, `ProxyHealthScoreConfig`,
-    `LogLevel`) ve `src/config/loadConfig.ts` (`loadConfig(): Config`)
-    eklendi — HİÇBİR tüketici (`AdvancedProxyManager`, `PersistentStateEngine`,
-    `index.ts`, `ConsoleJsonLogger`) bu turda bağlanmadı, sadece sözleşme +
-    üretim izole edildi (Kural #5, #13/#2/#15'te izlenen "önce sözleşme,
-    sonra ayrı onaylı turlarda wiring" deseniyle aynı). Tüm varsayılanlar
-    `AdvancedProxyManager.ts`'teki mevcut hardcoded değerlerle birebir
-    eşleşiyor (13 alan) — yani `loadConfig()` bağlansa bile davranış
-    DEĞİŞMEZ. Env var'lar `STATE_SYNC_*` prefix'iyle (Madde #13
-    konvansiyonu) okunuyor; geçersiz sayısal veya log-level değeri sessizce
-    varsayılana düşmüyor, throw ediyor (Kural #4). `deepFreeze()` ile
-    runtime'da da immutable.
-    **GERÇEK BULGU (doğrulama sırasında ortaya çıktı, ayrı bir madde değil
-    ama önemli bir ders):** İlk doğrulama turunda `runtime-check-config.ts`
-    "repo köküne konuldu" denmişti ama dosya gerçekte hiç diskte yoktu
-    (`ERR_MODULE_NOT_FOUND`) — sadece sohbette anlatılmış, hiç gerçek
-    artifact olarak verilmemişti (AGENT.md Kural #10'un fiilen ihlali).
-    İkinci bulgu: dosya gerçekten üretilip çalıştırıldığında `deepFreeze()`
-    doğru çalışmasına rağmen (`Object.isFrozen()` dört seviyede de `true`)
-    frozen bir alana atama THROW ETMEDİ — ilk bakışta kod hatası gibi
-    göründü. Kök neden kodda değil ortamdaydı: `tsconfig.json`'da
-    `"module": "node16"` var ama `package.json`'da `"type": "module"` YOK,
-    yani derlenmiş çıktı CommonJS — CJS modülleri varsayılan olarak strict
-    mode'da değildir, bu yüzden frozen property'ye atama THROW ETMEDEN
-    sessizce hiçbir etki yapmaz (spec'e göre beklenen davranış budur).
-    `before === after` (`300000 === 300000`) kontrolüyle gerçek korumanın
-    çalıştığı ayrıca doğrulandı — testten "throw etmeli" şartı çıkarıldı,
-    asıl sözleşme ("değer gerçekten değişmedi") doğrulandı.
-    **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
-    sıfır hata; (2) kapsam — sadece `src/config/Config.ts` ve
-    `src/config/loadConfig.ts` eklendi, mevcut hiçbir dosyaya dokunulmadı,
-    hiçbir tüketici bağlanmadı; (3) runtime — `runtime-check-config.ts`
-    (repo kökünde, diğer `runtime-check-*.ts` dosyalarıyla aynı
-    konvansiyonda) ile **5/5 TEST GRUBU PASS** (varsayılanlar, env override,
-    geçersiz sayı → throw, geçersiz log-level → throw, deep-freeze — throw
-    değil "değer gerçekten değişmedi" şartıyla).
-    **Kapsam dışı bırakılan (bilinçli, kullanıcı onaylı):**
-    `AdvancedProxyManager.ts`'in bu config'i kullanması, `index.ts`'in
-    `loadConfig()`'i çağırması, `ConsoleJsonLogger`'ın `logLevel`'e göre
-    filtrelemesi — hiçbiri bu turda yapılmadı, her biri ayrı bir
-    [KARAR BİLDİRİMİ] gerektiren ayrı bir tur (Kural #5).
+    KAPANDI (Session 3).** `src/config/Config.ts` + `src/config/
+    loadConfig.ts`, tüketicisiz (Kural #5). Tam ayrıntı artık
+    `session_arşiv.md`'de (Taşıma 7, `TASIMA_7.md`).
   - **(Yeni) Madde #12 — State versioning / migration (StateEnvelope, ilk
     slice): TAM KAPANDI (tüketicisiz, Session 3).** `src/types/
-    state-envelope.types.ts` (`StateEnvelope<T>` generic — `version`,
-    `capturedAt`, `state` üçü de required, `readonly` yok —,
-    `CURRENT_STATE_VERSION = 1`, `UnknownStateVersionError`) eklendi ve
-    `src/types/index.ts`'e export edildi. Migration fonksiyonlarının gövdesi
-    (v1→v2 vb.) BU TURDA YAZILMADI — migrate edilecek gerçek veri henüz yok.
-    `captureState()`/`applyState()`/`applyPreservedState()` imzaları
-    değiştirilmedi, `PersistentStateEngine.ts`'e dokunulmadı (Kural #5:
-    types + engine aynı turda karışmaz — Madde #27'de izlenen "önce
-    sözleşme, sonra ayrı onaylı turda wiring" deseniyle aynı).
-    **Kararlaştırılan açık varsayımlar:** `version: number` (artan tam
-    sayı, semver değil); bilinmeyen version'da sessiz düşüş yok, açık throw
-    (`UnknownStateVersionError`, kontrat hazır, henüz hiçbir yerde
-    çağrılmıyor çünkü migration gövdesi yok).
-    **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
-    `tsc exit: 0`; (2) kapsam — sadece `src/types/state-envelope.types.ts`,
-    `src/types/index.ts` (tam dosya, Kural #4) ve repo kökünde
-    `runtime-check-state-envelope.ts` eklendi, mevcut hiçbir tüketici
-    dosyaya dokunulmadı; (3) runtime — `runtime-check-state-envelope.ts`
-    ile **5/5 TEST GRUBU PASS** (`CURRENT_STATE_VERSION` sayısal ve 1,
-    `StateEnvelope` alanları eksiksiz atanabiliyor, JSON round-trip veri
-    kaybı yok, `UnknownStateVersionError instanceof Error`, hata mesajı
-    bilgilendirici). Doğrulama sırasında `ts-node`/Node24 uyumsuzluğu
-    `tsx`'e geçişle aşıldı; ardından 2/5 PASS veren bir ara sonuç ortaya
-    çıktı, kök neden Madde #12'den önce derlenmiş stray `src/types/*.js`
-    dosyalarıydı (`index.js`, `governor-command.types.js`,
-    `auth-validation.types.js`) — silindikten sonra 5/5. `git status
-    --porcelain -- src/types/` boş döndü, yani bu stray dosyalar zaten
-    untracked'tı, ayrı bir commit/push gerektirmedi.
-    **Kapsam dışı bırakılan (bilinçli, henüz ayrı bir madde değil, P2 açık
-    not — bkz. aşağıda P2 tablosu):** Aynı stray-`.js` kirliliği
-    `src/types/` dışında da var — `src/network/AdvancedProxyManager.js`,
-    `src/security/SecretProvider.js`, `src/state/ProxyCredentialStore.js`,
-    `src/state/ProxyHealthStore.js`. Bunlara bu turda dokunulmadı.
-- **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — ertelenmiş,
-  aktif çalışılmıyor. Madde #27 ve Madde #12'nin (ilk slice) kapanmasıyla
-  P1'den iki madde daha düştü. Sıradaki iş kullanıcının tercihine bağlı:
-  (a) #9'un ertelenmiş entegrasyon testine şimdi mi dönülsün; (b) Madde
-  #27'nin tüketicilere bağlanması (composition-root wiring:
-  `AdvancedProxyManager`, `index.ts`, `ConsoleJsonLogger`) ayrı onaylı
-  turlarda mı ele alınsın; (c) Madde #12'nin gerçek wiring'i
-  (`captureState()`/`applyState()`/`applyPreservedState()`'in
-  `StateEnvelope<T>` sarmalaması + ilk migration fonksiyonu) Madde #10/#11
-  persistence turlarından biriyle mi birleştirilsin; (d) Madde #13/#2/#15'in
-  ortak açık takibi olan composition-root/`better-sqlite3` `dbPath` sorusu
-  mu ele alınsın; (e) Madde #25 turunda çıkan açık gözlem (main-entry
-  `catch`'in `process.exitCode` ayarlamaması + gerçek sinyal iletimi/dbus
-  doğrulaması) ayrı bir madde olarak mı açılsın; (f) yeni bulunan
-  stray-`.js` kirliliği (network/security/state katmanları) numaralı bir
-  madde olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı
+    state-envelope.types.ts` (`StateEnvelope<T>`, `CURRENT_STATE_VERSION`,
+    `UnknownStateVersionError`), tüketicisiz (Kural #5). Tam ayrıntı artık
+    `session_arşiv.md`'de (Taşıma 7).
+- **Sıradaki öncelik: Madde #37 (kullanıcı kararıyla, Session 4).** P0
+  tablosunda hâlâ sadece **#9** açık — ertelenmiş, aktif çalışılmıyor.
+  Madde #37 kapsamındaki iki alt-adımdan hangisiyle başlanacağı henüz
+  seçilmedi: (a) `better-sqlite3` bağımlılık düzeltmesi (küçük, hızlı,
+  bloklayıcı) mı önce, yoksa (b) deploy hedefi kararı (Fly.io'nun artık
+  ücretsiz katman sunmadığı netleşti, alternatif değerlendirmesi
+  gerekebilir) mı önce ele alınsın. Diğer bekleyen seçenekler (öncelik
+  #37'nin gerisinde): (c) #9'un ertelenmiş entegrasyon testi; (d) Madde
+  #27'nin tüketicilere bağlanması; (e) Madde #12'nin gerçek wiring'i;
+  (f) composition-root/`dbPath` sorusu; (g) Madde #25 turunda çıkan
+  `process.exitCode` gözlemi; (h) stray-`.js` kirliliğinin madde olarak
+  açılıp açılmayacağı. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı
   sorusu (bkz. ❓ Cevap Bekleyen Sorular).
-- **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 6** yapıldı — Madde #24 ve
-  #25'in tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
-  Kararlar ve Kapanan Maddeler Geçmişi'ndeki kopyalar dahil, ayrıca iki eski
-  oturum-sonu notu) `session_arşiv.md`'ye eklenmek üzere ayrı bir
-  `TASIMA_6.md` bloğu olarak verildi (arşivin kendisi yeniden üretilmedi,
-  sadece yeni blok — Kural #11). **Kullanıcıdan istenen:** `TASIMA_6.md`
-  içeriğini mevcut `session_arşiv.md`'nin sonuna ekle (append) — Taşıma 5
-  için de bu adım hâlâ teyit edilmedi, ikisi birlikte eklenebilir.
+- **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 7** yapıldı — Madde #27 ve
+  #12'nin tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
+  Kararlar ve Kapanan Maddeler Geçmişi'ndeki kopyalar dahil)
+  `session_arşiv.md`'ye eklenmek üzere ayrı bir `TASIMA_7.md` bloğu olarak
+  verildi (arşivin kendisi yeniden üretilmedi, sadece yeni blok —
+  Kural #11). **Kullanıcıdan istenen:** `TASIMA_7.md` içeriğini mevcut
+  `session_arşiv.md`'nin sonuna ekle (append) — Taşıma 5 ve 6 için de bu
+  adım hâlâ teyit edilmedi, üçü birlikte eklenebilir.
 
 ---
 
@@ -168,6 +131,7 @@
 | 16 | Correlation ID / distributed tracing | telemetry |
 | 28 | Retry budget | policies |
 | 29 | Circuit breaker (proxy/session/resource) | policies |
+| 37 | Deploy hedefi netleştirme + native-modül smoke testi (`better-sqlite3` + Playwright) | deploy/packaging — **AKTİF ÖNCELİK** (Session 4'te kullanıcı kararıyla açıldı) |
 
 ## 🟢 AÇIK MADDELER — P2
 
@@ -257,8 +221,10 @@
 - **(Yeni) Madde #27 — merkezi config sözleşmesi: `src/config/Config.ts` +
   `src/config/loadConfig.ts`, `STATE_SYNC_*` env prefix konvansiyonu
   (Madde #13 ile aynı), `deepFreeze()` ile runtime immutability.** TAM
-  KAPANDI (ilk slice, tüketicisiz) — tam gerekçe/doğrulama yukarıda
-  ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik aşımında arşive taşınacak).
+  KAPANDI (ilk slice, tüketicisiz) — tam gerekçe/doğrulama artık
+  Taşıma 7'de (`TASIMA_7.md`).
+- **(Yeni) Madde #12 — StateEnvelope<T> sözleşmesi (ilk slice,
+  tüketicisiz).** TAM KAPANDI — tam gerekçe/doğrulama artık Taşıma 7'de.
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume + resmi Playwright Docker image. Kesinleşmiş
   değil.
@@ -276,13 +242,13 @@
 > TAM METİN kapanış anlatıları ve 5 adet çözülmüş Cevap Bekleyen Soru, ayrı
 > bir `TASIMA_5.md` bloğu olarak verildi — kullanıcının bunu
 > `session_arşiv.md`'nin sonuna eklemesi gerekiyor.
-> **(Yeni — Session 3, Taşıma 6)** SESSION_INDEX.md 400 satır eşiği beşinci
-> kez aşıldı (Madde #27 kapanışıyla). Bu tur: Madde #24, #25'in TAM METİN
-> kapanış anlatıları (ANLIK DURUM + Kritik Teknik Kararlar + bu bölümdeki
-> kopyalar) ve iki eski oturum-sonu notu, ayrı bir `TASIMA_6.md` bloğu
-> olarak verildi — **kullanıcının bunu mevcut `session_arşiv.md`'nin
-> sonuna eklemesi gerekiyor** (Taşıma 5 ile birlikte, ikisi de henüz
-> teyit edilmedi). Hiçbir içerik silinmedi, sadece taşındı.
+> **(Yeni — Session 3→4, Taşıma 7)** SESSION_INDEX.md 400 satır eşiği
+> altıncı kez aşıldı (Madde #37'nin açılmasıyla). Bu tur: Madde #27, #12'nin
+> TAM METİN kapanış anlatıları (ANLIK DURUM + Kritik Teknik Kararlar + bu
+> bölümdeki kopyalar), ayrı bir `TASIMA_7.md` bloğu olarak verildi —
+> **kullanıcının bunu mevcut `session_arşiv.md`'nin sonuna eklemesi
+> gerekiyor** (Taşıma 5/6 ile birlikte, üçü de henüz teyit edilmedi).
+> Hiçbir içerik silinmedi, sadece taşındı.
 
 - *(Madde #22, #13, #33, #2, #15'in tam kapanış kayıtları Taşıma 5 ile
   `session_arşiv.md`'ye taşındı — bkz. `TASIMA_5.md`. Kısa referans: hepsi
@@ -290,13 +256,9 @@
 - *(Madde #24, #25'in tam kapanış kayıtları Taşıma 6 ile `session_arşiv.md`'ye
   taşındı — bkz. `TASIMA_6.md`. Kısa referans: hepsi TAM KAPANDI, P1
   tablosundan kaldırıldı.)*
-- **(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
-  KAPANDI (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda
-  ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik aşımında arşive taşınacak).
-- **(Yeni) Madde #12 — State versioning / migration (StateEnvelope, ilk
-  slice): TAM KAPANDI (tüketicisiz, Session 3), P1 tablosundan kaldırıldı.**
-  Tam ayrıntı yukarıda ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik
-  aşımında arşive taşınacak).
+- *(Madde #27, #12'nin tam kapanış kayıtları Taşıma 7 ile
+  `session_arşiv.md`'ye taşındı — bkz. `TASIMA_7.md`. Kısa referans: ikisi
+  de TAM KAPANDI (ilk slice, tüketicisiz), P1 tablosundan kaldırıldı.)*
 
 ---
 
