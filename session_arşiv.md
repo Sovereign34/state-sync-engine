@@ -338,3 +338,176 @@ Ayrıntı için bu bloğun bir üstündeki Taşıma 2 girdisi (aynı konunun
   `markFailed`; başarı yolu → `recordSuccess`) runtime + derleme
   seviyesinde doğrulandı, madde P0 tablosundan kaldırıldı.
 
+----.## TAŞIMA 5 (Session 3 — SESSION_INDEX.md 400 satır eşiği dördüncü kez aşıldı)
+
+> Bu blok `session_arşiv.md`'nin SONUNA eklenir (append). Arşivin kendisi bu
+> turda yeniden üretilmedi — sadece bu yeni taşıma bloğu verildi (Kural #11 —
+> "arşiv parçasının kendisi hiçbir zaman tam dosya olarak yeniden üretilmez").
+> Taşınan madde: #22, #13, #33, #2, #15 (tam kapanmış, SESSION_INDEX'te artık
+> sadece tek satır referans bırakıldı) + 3 adet çözülmüş Cevap Bekleyen Soru.
+> Hiçbir içerik silinmedi, sadece SESSION_INDEX.md'den buraya taşındı.
+
+---
+
+### Madde #22 — Governor aksiyonlarının proxy sağlığına doğru bağlanması (TAM KAPANDI, Session 3, P0 tablosundan kaldırıldı)
+
+TÜM ALT-KAPSAMLARIYLA TAM KAPANDI. THROTTLE, ROTATE_SESSION_ONLY,
+QUARANTINE_PROXY, FULL_RECOVERY case'lerinin hepsi doğru tip-guard'larla
+`proxyManager.markFailed()`'e bağlandı; başarı yolu (`recordSuccess()` köprüsü)
+guard'lı şekilde bağlandı. Ayrıntılar:
+
+- THROTTLE case'i önceden `proxyManager`'ı hiç haberdar etmiyordu —
+  QUARANTINE_PROXY/FULL_RECOVERY ile aynı desende `markFailed(proxyId,
+  'HTTP_429')` eklendi.
+- ROTATE_SESSION_ONLY case'ine de aynı desende `markFailed('HTTP_429')`
+  eklendi, ama SADECE gerçek anomaly tipi `HTTP_429` ise (CHALLENGE_DETECTED
+  de aynı action'a düştüğü için, proxy'nin `http429Count`'unun yanlışlıkla
+  artmaması için tip-guard'lı).
+- FULL_RECOVERY case'i önceden anomaly tipine bakmadan HER durumda
+  `markFailed` çağırıyordu; düzeltme ile `AUTH_VALIDATION_FAILED` artık HARİÇ
+  tutuluyor (proxy sağlığı ile session/auth-state sağlığı ayrı katmanlar).
+- `recordSuccess()` köprüsü eklendi: `PlaywrightPageObserver`, genuinely
+  başarılı (`response.ok()`, 2xx) response'larda `IStateObserver`'ın önceden
+  var olan ama hiç kullanılmayan `'state'` kanalını emit ediyor;
+  `PersistentStateEngine.handleObserverState()` bunu dinleyip
+  `proxyManager.recordSuccess()`'e bağlıyor.
+
+Doğrulama: `runtime-check.ts` (TEST 1-5, hepsi PASS) + `npx tsc --noEmit`
+(0 hata) ile runtime + derleme seviyesinde doğrulandı.
+
+### Madde #13 — Credential/state encryption-at-rest (TAM KAPANDI, Session 3, P0 tablosundan kaldırıldı)
+
+Secret yönetimi kaynağı KARARLAŞTIRILDI ve UYGULANDI: env var
+(`STATE_SYNC_ENCRYPTION_KEY`) + AES-256-GCM envelope encryption, bir
+`SecretProvider` interface'i (`src/security/`) arkasında. `ProxyCredentialStore`
+(`src/state/`, SQLite / `better-sqlite3`) eklendi. `AdvancedProxyManager`
+constructor'ı geriye dönük uyumlu opsiyonel 3. parametre (`credentialStore?`)
+ile genişletildi.
+
+Doğrulama: `runtime-check-persistence.ts` ile **4/4 PASS**; `npx tsc --noEmit;
+echo "EXIT CODE: $?"` → **EXIT CODE: 0** ekran görüntüsüyle teyit edildi.
+
+**Güvenlik notu:** doğrulama sırasında üretilen bir `STATE_SYNC_ENCRYPTION_KEY`
+örneği bir ekran görüntüsünde açığa çıkmıştı, kullanıcıya rotate etmesi
+önerildi.
+
+**Kapsam dışı bırakılan açık takip (production'da fiilen aktif olması için
+hâlâ gerekli):** (a) `package.json`'a `better-sqlite3`/`@types/better-sqlite3`
+eklenmesi, (b) composition-root'ta `credentialStore`/`dbPath` injection —
+ikisi de hâlâ görülmedi, Madde #2'nin aynı türden açık takibiyle birleşiyor.
+
+### Madde #33 — crash/requestfailed'in IStateObserver sözleşmesine taşınması (TAM KAPANDI, Session 3, P0 tablosundan kaldırıldı)
+
+`crash`/`requestfailed`, `PersistentStateEngine.attachLifecycleObservers()`
+içinde ham `page.on(...)` olarak kalan son iki sinyaldi — artık ikisi de
+`IStateObserver` sözleşmesi üzerinden, `PlaywrightPageObserver` aracılığıyla
+geliyor. `IStateObserver.AnomalyType`'a jenerik `PROCESS_CRASHED`/
+`NETWORK_ERROR` değerleri eklendi — governor tarafının `PAGE_CRASH`/
+`NETWORK_FAILURE` isimlerinden BİLİNÇLİ OLARAK farklı (iki ayrı sözleşmenin
+yanlışlıkla aynı tip sanılmaması için), ikisini eşleyen TEK yer
+`PersistentStateEngine.translateObserverAnomaly()`.
+`requestfailed` için önceki filtre (SADECE `net::ERR_`/`DNS` içeren hatalar)
+AYNEN korundu.
+
+Doğrulama: `runtime-check-observer.ts` ile **6/6 PASS** (crash→PROCESS_CRASHED,
+net::ERR_→NETWORK_ERROR + rawError/sourceUrl doğru taşınıyor, filtre dışı hata
+emit edilmiyor, `stop()` sonrası dinleme kesiliyor), `npx tsc --noEmit; echo
+"EXIT CODE: $?"` → **EXIT CODE: 0**.
+
+`IStateObserver.ts`/`IResourceAdapter.ts`, bu madde kapsamında `legacy/`'den
+`src/adapters/`'a taşındı — artık `src/`'in resmi parçası.
+
+### Madde #2 — Persistent proxy state (TAM KAPANDI, Session 3, P1 tablosundan kaldırıldı)
+
+Proxy store backend KARARLAŞTIRILDI ve UYGULANDI: SQLite (`better-sqlite3`),
+`ProxyCredentialStore` ile aynı DB dosyası, ayrı `proxy_health` tablosu.
+Gerekçe: tek-node motor, ekstra servis/network bağımlılığı istenmiyor; Redis
+ve Neon/Postgres kullanıcı onayıyla elendi. Yeni `ProxyHealthStore`
+(`src/state/ProxyHealthStore.ts`) proxy health/quarantine alanlarını kalıcı
+hale getiriyor; yazma sadece `markFailed()` içinde `quarantineUntil`
+güncellendiği anda tetikleniyor (write-through DEĞİL — bu bilinçli bir
+trade-off olarak not düşülüyor, aksi halde ileride "bug" sanılabilir). TTL =
+24 saat, kullanıcı onayıyla sabitlendi.
+
+Doğrulama: `runtime-check-health.js` ile **6/6 PASS** (runtime) + `npx tsc
+--noEmit` → **EXIT CODE: 0** (derleme) ekran görüntüleriyle teyit edildi.
+
+**Housekeeping (kullanıcı onayıyla):** derlenmiş `runtime-check-health.js`
+repo kökünden silindi (diğer `runtime-check-*` dosyaları gibi yalnızca `.ts`
+kaynağı kalıyor).
+
+**Kapsam dışı bırakılan açık takip:** composition-root'ta hangi `dbPath`'in
+kullanılacağı hâlâ görülmedi — Madde #13'ün aynı türden açık takibiyle
+birleşiyor, ikisi de aynı composition-root noktasında çözülecek.
+
+### Madde #15 — Structured (JSON) logging (TAM KAPANDI, Session 3, P1 tablosundan kaldırıldı)
+
+Kural #5 ("Governor/ProxyManager/StateEngine aynı turda birlikte
+değiştirilmez") gereği önce sözleşme + implementasyon izole verildi:
+`src/telemetry/ILogger.ts` (arayüz: `debug/info/warn/error`, her biri
+`message: string` + opsiyonel `meta: Record<string, unknown>` alır) +
+`src/telemetry/ConsoleJsonLogger.ts` (constructor'da `component: string` alır,
+`{"level","component","message",...meta}` JSON şeklini üretir — daha önce
+`ProxyHealthStore`'un stopgap olarak kullandığı şeklin tek merkezi kaynağı).
+Ardından 3 tüketici dosya (`ProxyHealthStore.ts`, `PersistentStateEngine.ts`,
+`index.ts`) SecretProvider/AuthValidationPort'ta izlenen sırayla, ayrı ayrı
+KARAR BİLDİRİMİ'leriyle güncellendi. Enjeksiyon deseni: `healthStore?`/
+`credentialStore?` ile aynı desende **opsiyonel constructor parametresi**
+(verilmezse `ConsoleJsonLogger` varsayılan) — `authValidator`'ın ZORUNLU
+olmasından BİLİNÇLİ OLARAK farklı, çünkü loglama eksikliği Kural #4 anlamında
+"sahte veri/sessiz fallback" üretmiyor, sadece log basmıyor.
+
+**Tutarsızlık bulundu ve düzeltildi:** `PersistentStateEngine.ts` için grep
+çıktısı (2 gün önce alınmış) 5 `console.*` çağrısı gösteriyordu, ama gerçek
+dosyada 7 vardı (`captureState`/`applyState` catch bloklarındaki 2
+`console.warn` grep'te kayıptı) — gerçek dosya esas alındı, 7 çağrının tamamı
+değiştirildi. Repo genelinde toplam **11** `console.*` çağrısı `ILogger`'a
+taşındı (`index.ts`'teki demo bloğu dahil — tutarlılık için taşınmasına karar
+verildi).
+
+Doğrulama: izole `runtime-check-logger.ts` ile **4/4 PASS** (seviye→doğru
+`console.*` metodu + doğru JSON şekli; `meta` içindeki çakışan anahtarlar
+`level/component/message`'ı ezemiyor; circular `meta` throw etmiyor,
+`metaSerializationError:true` ile `message` kaybolmadan devam ediyor; `meta`
+verilmediğinde ekstra alan sızmıyor) + repo genelinde (3 tüketici dosya
+dahil, projenin kendi `tsconfig.json`'ıyla) `npx tsc --noEmit; echo "EXIT
+CODE: $?"` → **EXIT CODE: 0**.
+
+**Kapsam dışı bırakılan açık takipler:** (a) log seviyesi filtreleme (env var
+ile min-level) — Madde #27 (merkezi config) ile birleşebilir; (b)
+`runtime-check-logger.ts` içindeki `ProxyHealthStore` entegrasyon testi
+(TEST 5) bu turda dosyadan çıkarıldı — Kural #5 gereği Madde #15'in kapanışını
+`better-sqlite3` kurulumuna bağımlı hale getirmemek için, sadece izole
+sözleşme test edildi. **Ayrıca not (araç uyumsuzluğu, kod kaynaklı değil):**
+Node'un yerleşik TypeScript desteği (Node 24) uzantısız relative import'ları
+çözemediği için `runtime-check-logger.ts` doğrudan `node` ile çalıştırılamadı
+— projenin kendi konvansiyonuna uyularak `npx tsc` ile `/tmp` altına
+derlenip derlenmiş `.js` çalıştırıldı (repo köküne housekeeping gereken bir
+dosya bırakılmadı).
+
+---
+
+### Çözülmüş Cevap Bekleyen Sorular (Taşıma 5 ile arşive alındı)
+
+- **`FULL_RECOVERY`/`AUTH_VALIDATION_FAILED` düzeltmesi doğrulama yöntemi:**
+  `tsc --noEmit` yeterli mi, yoksa TEST 5 mi eklensin? — **fiilen TEST 5
+  eklenerek çözüldü**: hem `tsc --noEmit` (0 hata) hem `runtime-check.ts`
+  TEST 5a/5b (PASS) ile doğrulandı, Madde #22 kapandı.
+- **`PersistentStateEngine.ts` (debug-log temizlenmiş sürüm) repo'ya
+  uygulandı mı?** — **kullanıcı teyit etti: evet, uygulandı**.
+- **Madde #13 — `npx tsc --noEmit` gerçekten 0 hata mı döndü?** — **çözüldü**:
+  `EXIT CODE: 0` ekran görüntüsüyle teyit edildi.
+- **Madde #33 — crash/requestfailed `IStateObserver`'a nasıl taşınacak,
+  `AnomalyType` genişletilecek mi?** — **çözüldü**: kullanıcı onayıyla
+  `PROCESS_CRASHED`/`NETWORK_ERROR` eklendi, `runtime-check-observer.ts`
+  6/6 PASS + `EXIT CODE: 0` ile doğrulandı.
+- **Madde #2 — TTL süresi (24 saat) production için uygun mu, housekeeping
+  (`runtime-check-health.js`) silinsin mi?** — **kullanıcı onayladı**: TTL
+  24 saat sabitlendi, dosya silindi.
+- **Madde #15 — `ILogger` enjeksiyon şekli (opsiyonel + varsayılan
+  `ConsoleJsonLogger`) ve `index.ts` demo bloğundaki `console.*`'ların da
+  taşınıp taşınmayacağı?** — **fiilen çözüldü**: 3 tüketici dosya (demo bloğu
+  dahil `index.ts`) merkezi `ILogger`'ı kullanacak şekilde güncellendi,
+  tutarlılık tercih edildi; opsiyonel/varsayılan enjeksiyon deseni değişmeden
+  uygulandı ve testlerle doğrulandı.
+
