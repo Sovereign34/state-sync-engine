@@ -618,3 +618,108 @@ headless Chromium'un dbus bağımlılığı henüz doğrulanmadı — yeni madde
 açılmayacağı kullanıcı kararına bırakıldı. P0 tablosunda hâlâ sadece **#9**
 kalıyor (ertelenmiş, aktif çalışılmıyor). Sıradaki adım kullanıcının
 tercihine bağlı (bkz. Sıradaki Öncelik).*
+## TAŞIMA 7 (Session 3→4 sınırı, SESSION_INDEX.md 400 satır eşiği altıncı kez aşıldığında taşındı)
+
+> Bu blok, SESSION_INDEX.md'nin ⚡ ANLIK DURUM ve 📌 KRİTİK TEKNİK KARARLAR /
+> 📜 KAPANAN MADDELER GEÇMİŞİ bölümlerinde "henüz taze, sonraki eşik
+> aşımında arşive taşınacak" notuyla bekletilen Madde #27 ve Madde #12 tam
+> metin kapanış anlatılarını içerir. Hiçbir içerik silinmedi, sadece
+> taşındı (Kural #11).
+
+### Madde #27 — Merkezi immutable configuration (ilk slice)
+
+**(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
+KAPANDI (Session 3).** `src/config/Config.ts` (sözleşme: `Config`,
+`ProxyConfig`, `ProxyQuarantineConfig`, `ProxyHealthScoreConfig`,
+`LogLevel`) ve `src/config/loadConfig.ts` (`loadConfig(): Config`)
+eklendi — HİÇBİR tüketici (`AdvancedProxyManager`, `PersistentStateEngine`,
+`index.ts`, `ConsoleJsonLogger`) bu turda bağlanmadı, sadece sözleşme +
+üretim izole edildi (Kural #5, #13/#2/#15'te izlenen "önce sözleşme,
+sonra ayrı onaylı turlarda wiring" deseniyle aynı). Tüm varsayılanlar
+`AdvancedProxyManager.ts`'teki mevcut hardcoded değerlerle birebir
+eşleşiyor (13 alan) — yani `loadConfig()` bağlansa bile davranış
+DEĞİŞMEZ. Env var'lar `STATE_SYNC_*` prefix'iyle (Madde #13
+konvansiyonu) okunuyor; geçersiz sayısal veya log-level değeri sessizce
+varsayılana düşmüyor, throw ediyor (Kural #4). `deepFreeze()` ile
+runtime'da da immutable.
+
+**GERÇEK BULGU (doğrulama sırasında ortaya çıktı, ayrı bir madde değil
+ama önemli bir ders):** İlk doğrulama turunda `runtime-check-config.ts`
+"repo köküne konuldu" denmişti ama dosya gerçekte hiç diskte yoktu
+(`ERR_MODULE_NOT_FOUND`) — sadece sohbette anlatılmış, hiç gerçek
+artifact olarak verilmemişti (AGENT.md Kural #10'un fiilen ihlali).
+İkinci bulgu: dosya gerçekten üretilip çalıştırıldığında `deepFreeze()`
+doğru çalışmasına rağmen (`Object.isFrozen()` dört seviyede de `true`)
+frozen bir alana atama THROW ETMEDİ — ilk bakışta kod hatası gibi
+göründü. Kök neden kodda değil ortamdaydı: `tsconfig.json`'da
+`"module": "node16"` var ama `package.json`'da `"type": "module"` YOK,
+yani derlenmiş çıktı CommonJS — CJS modülleri varsayılan olarak strict
+mode'da değildir, bu yüzden frozen property'ye atama THROW ETMEDEN
+sessizce hiçbir etki yapmaz (spec'e göre beklenen davranış budur).
+`before === after` (`300000 === 300000`) kontrolüyle gerçek korumanın
+çalıştığı ayrıca doğrulandı — testten "throw etmeli" şartı çıkarıldı,
+asıl sözleşme ("değer gerçekten değişmedi") doğrulandı.
+
+**Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
+sıfır hata; (2) kapsam — sadece `src/config/Config.ts` ve
+`src/config/loadConfig.ts` eklendi, mevcut hiçbir dosyaya dokunulmadı,
+hiçbir tüketici bağlanmadı; (3) runtime — `runtime-check-config.ts`
+(repo kökünde, diğer `runtime-check-*.ts` dosyalarıyla aynı
+konvansiyonda) ile **5/5 TEST GRUBU PASS** (varsayılanlar, env override,
+geçersiz sayı → throw, geçersiz log-level → throw, deep-freeze — throw
+değil "değer gerçekten değişmedi" şartıyla).
+
+**Kapsam dışı bırakılan (bilinçli, kullanıcı onaylı):**
+`AdvancedProxyManager.ts`'in bu config'i kullanması, `index.ts`'in
+`loadConfig()`'i çağırması, `ConsoleJsonLogger`'ın `logLevel`'e göre
+filtrelemesi — hiçbiri bu turda yapılmadı, her biri ayrı bir
+[KARAR BİLDİRİMİ] gerektiren ayrı bir tur (Kural #5).
+
+### Madde #12 — State versioning / migration (StateEnvelope, ilk slice)
+
+**(Yeni) Madde #12 — State versioning / migration (StateEnvelope, ilk
+slice): TAM KAPANDI (tüketicisiz, Session 3).** `src/types/
+state-envelope.types.ts` (`StateEnvelope<T>` generic — `version`,
+`capturedAt`, `state` üçü de required, `readonly` yok —,
+`CURRENT_STATE_VERSION = 1`, `UnknownStateVersionError`) eklendi ve
+`src/types/index.ts`'e export edildi. Migration fonksiyonlarının gövdesi
+(v1→v2 vb.) BU TURDA YAZILMADI — migrate edilecek gerçek veri henüz yok.
+`captureState()`/`applyState()`/`applyPreservedState()` imzaları
+değiştirilmedi, `PersistentStateEngine.ts`'e dokunulmadı (Kural #5:
+types + engine aynı turda karışmaz — Madde #27'de izlenen "önce
+sözleşme, sonra ayrı onaylı turda wiring" deseniyle aynı).
+
+**Kararlaştırılan açık varsayımlar:** `version: number` (artan tam
+sayı, semver değil); bilinmeyen version'da sessiz düşüş yok, açık throw
+(`UnknownStateVersionError`, kontrat hazır, henüz hiçbir yerde
+çağrılmıyor çünkü migration gövdesi yok).
+
+**Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
+`tsc exit: 0`; (2) kapsam — sadece `src/types/state-envelope.types.ts`,
+`src/types/index.ts` (tam dosya, Kural #4) ve repo kökünde
+`runtime-check-state-envelope.ts` eklendi, mevcut hiçbir tüketici
+dosyaya dokunulmadı; (3) runtime — `runtime-check-state-envelope.ts`
+ile **5/5 TEST GRUBU PASS** (`CURRENT_STATE_VERSION` sayısal ve 1,
+`StateEnvelope` alanları eksiksiz atanabiliyor, JSON round-trip veri
+kaybı yok, `UnknownStateVersionError instanceof Error`, hata mesajı
+bilgilendirici). Doğrulama sırasında `ts-node`/Node24 uyumsuzluğu
+`tsx`'e geçişle aşıldı; ardından 2/5 PASS veren bir ara sonuç ortaya
+çıktı, kök neden Madde #12'den önce derlenmiş stray `src/types/*.js`
+dosyalarıydı (`index.js`, `governor-command.types.js`,
+`auth-validation.types.js`) — silindikten sonra 5/5. `git status
+--porcelain -- src/types/` boş döndü, yani bu stray dosyalar zaten
+untracked'tı, ayrı bir commit/push gerektirmedi.
+
+**Kapsam dışı bırakılan (bilinçli, henüz ayrı bir madde değil, P2 açık
+not — bkz. SESSION_INDEX.md P2 tablosu):** Aynı stray-`.js` kirliliği
+`src/types/` dışında da var — `src/network/AdvancedProxyManager.js`,
+`src/security/SecretProvider.js`, `src/state/ProxyCredentialStore.js`,
+`src/state/ProxyHealthStore.js`. Bunlara bu turda dokunulmadı.
+
+**Not (Session 4'te ortaya çıktı, doğrulama zincirine ek):** Gerçek zip
+repo incelemesinde `src/state/ProxyCredentialStore.ts` ve
+`src/state/ProxyHealthStore.ts`'in kullandığı `better-sqlite3`
+bağımlılığının `package.json`'da hiç bulunmadığı görüldü — bu Madde
+#12'nin kapsamı dışında (Madde #12 hiçbir bağımlılık eklemedi/kullanmadı),
+ama genel repo sağlığını ilgilendiren bir bulgu olarak Madde #37'ye
+(deploy hedefi + native-modül smoke testi) taşındı.
