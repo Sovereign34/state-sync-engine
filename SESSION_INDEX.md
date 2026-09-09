@@ -34,6 +34,15 @@
   (jest/vitest) + CI kurulumu **kasıtlı olarak bu maddeye dahil edilmedi**
   — Madde #9'un ertelenen entegrasyon testiyle aynı ana denk getirilmesi
   öneriliyor (Kural #5: kapsamı şişirmeme).
+  **(Yeni — Session 4) CI planı kaydedildi, henüz UYGULANMADI:** GitHub
+  Actions CI'ın, deploy'da kullanılacak aynı resmi Playwright Docker
+  image'ı (`mcr.microsoft.com/playwright:vX-noble`) üzerinde çalıştırılması
+  öneriliyor — gerekçe: native modül (`better-sqlite3`) derleme
+  toolchain'i zaten image içinde geliyor, "local'de çalışıyor ama CI'da/
+  production'da patlıyor" riskini CI ve deploy'un AYNI ortamı kullanması
+  ortadan kaldırıyor. Bu, deploy hedefi kararından (Fly.io vs alternatif)
+  BAĞIMSIZ olarak şimdiden planlanabilir çünkü CI image'ı deploy hedefinden
+  ayrı bir karar.
   **Fly.io güncel durum araştırması (Session 4, web_search ile
   doğrulandı):** Resmi `fly.io/pricing/` sayfası artık "No plans and no
   tiers" diyor — genel bir ücretsiz katman YOK, tamamen kullanım bazlı
@@ -151,7 +160,7 @@
     o turda temizlendi), henüz numaralı bir madde değil, formalize edilip
     edilmeyeceği kullanıcı kararına bağlı — bkz. Cevap Bekleyen Sorular |
 | 26 | Health/readiness endpoint | engine |
-| 30 | Test piramidi kurulumu | test |
+| 30 | Test piramidi kurulumu | test — **UYGULAMA PLANI KAYITLI (Session 4):** `node:test` (Node'un built-in test runner'ı, Node 22+ native TS type-stripping) ile 12 mevcut `runtime-check-*.ts` dosyasının `*.test.ts`'e göçü + `package.json`'a `"test": "node --test"` script'i eklenmesi. Vitest yerine `node:test` tercih edildi çünkü (a) projede Vite yok, Vitest'in asıl avantajı (Vite config paylaşımı) geçersiz, (b) sıfır ek bağımlılık — daha önce yaşanan `ts-node`/Node24 uyumsuzluğu bir daha yaşanmaz, (c) mevcut `runtime-check-*.ts` dosyalarındaki custom `expect` helper mantığı `node:test`'e yakın, sıfırdan yazım değil göç olur. Henüz UYGULANMADI, sadece plan kaydedildi. |
 | 31 | State integrity testleri | test |
 | 32 | Session identity / generation modeli | engine — Madde #5 entegrasyonunda geçici `sessionId` üretimi eklendi (`Math.random().toString(36)`), gerçek model hâlâ burada ele alınacak |
 | 34 | BrowserContextFactory standardizasyonu | network |
