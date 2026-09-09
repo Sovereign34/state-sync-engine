@@ -69,18 +69,58 @@
     `loadConfig()`'i çağırması, `ConsoleJsonLogger`'ın `logLevel`'e göre
     filtrelemesi — hiçbiri bu turda yapılmadı, her biri ayrı bir
     [KARAR BİLDİRİMİ] gerektiren ayrı bir tur (Kural #5).
+  - **(Yeni) Madde #12 — State versioning / migration (StateEnvelope, ilk
+    slice): TAM KAPANDI (tüketicisiz, Session 3).** `src/types/
+    state-envelope.types.ts` (`StateEnvelope<T>` generic — `version`,
+    `capturedAt`, `state` üçü de required, `readonly` yok —,
+    `CURRENT_STATE_VERSION = 1`, `UnknownStateVersionError`) eklendi ve
+    `src/types/index.ts`'e export edildi. Migration fonksiyonlarının gövdesi
+    (v1→v2 vb.) BU TURDA YAZILMADI — migrate edilecek gerçek veri henüz yok.
+    `captureState()`/`applyState()`/`applyPreservedState()` imzaları
+    değiştirilmedi, `PersistentStateEngine.ts`'e dokunulmadı (Kural #5:
+    types + engine aynı turda karışmaz — Madde #27'de izlenen "önce
+    sözleşme, sonra ayrı onaylı turda wiring" deseniyle aynı).
+    **Kararlaştırılan açık varsayımlar:** `version: number` (artan tam
+    sayı, semver değil); bilinmeyen version'da sessiz düşüş yok, açık throw
+    (`UnknownStateVersionError`, kontrat hazır, henüz hiçbir yerde
+    çağrılmıyor çünkü migration gövdesi yok).
+    **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
+    `tsc exit: 0`; (2) kapsam — sadece `src/types/state-envelope.types.ts`,
+    `src/types/index.ts` (tam dosya, Kural #4) ve repo kökünde
+    `runtime-check-state-envelope.ts` eklendi, mevcut hiçbir tüketici
+    dosyaya dokunulmadı; (3) runtime — `runtime-check-state-envelope.ts`
+    ile **5/5 TEST GRUBU PASS** (`CURRENT_STATE_VERSION` sayısal ve 1,
+    `StateEnvelope` alanları eksiksiz atanabiliyor, JSON round-trip veri
+    kaybı yok, `UnknownStateVersionError instanceof Error`, hata mesajı
+    bilgilendirici). Doğrulama sırasında `ts-node`/Node24 uyumsuzluğu
+    `tsx`'e geçişle aşıldı; ardından 2/5 PASS veren bir ara sonuç ortaya
+    çıktı, kök neden Madde #12'den önce derlenmiş stray `src/types/*.js`
+    dosyalarıydı (`index.js`, `governor-command.types.js`,
+    `auth-validation.types.js`) — silindikten sonra 5/5. `git status
+    --porcelain -- src/types/` boş döndü, yani bu stray dosyalar zaten
+    untracked'tı, ayrı bir commit/push gerektirmedi.
+    **Kapsam dışı bırakılan (bilinçli, henüz ayrı bir madde değil, P2 açık
+    not — bkz. aşağıda P2 tablosu):** Aynı stray-`.js` kirliliği
+    `src/types/` dışında da var — `src/network/AdvancedProxyManager.js`,
+    `src/security/SecretProvider.js`, `src/state/ProxyCredentialStore.js`,
+    `src/state/ProxyHealthStore.js`. Bunlara bu turda dokunulmadı.
 - **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — ertelenmiş,
-  aktif çalışılmıyor. Madde #27'nin ilk slice'ının kapanmasıyla P1'den bir
-  madde daha düştü. Sıradaki iş kullanıcının tercihine bağlı: (a) #9'un
-  ertelenmiş entegrasyon testine şimdi mi dönülsün; (b) Madde #27'nin
-  tüketicilere bağlanması (composition-root wiring: `AdvancedProxyManager`,
-  `index.ts`, `ConsoleJsonLogger`) ayrı onaylı turlarda mı ele alınsın;
-  (c) Madde #13/#2/#15'in ortak açık takibi olan composition-root/
-  `better-sqlite3` `dbPath` sorusu mu ele alınsın; (d) Madde #25 turunda
-  çıkan açık gözlem (main-entry `catch`'in `process.exitCode`
-  ayarlamaması + gerçek sinyal iletimi/dbus doğrulaması) ayrı bir madde
-  olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu
-  (bkz. ❓ Cevap Bekleyen Sorular).
+  aktif çalışılmıyor. Madde #27 ve Madde #12'nin (ilk slice) kapanmasıyla
+  P1'den iki madde daha düştü. Sıradaki iş kullanıcının tercihine bağlı:
+  (a) #9'un ertelenmiş entegrasyon testine şimdi mi dönülsün; (b) Madde
+  #27'nin tüketicilere bağlanması (composition-root wiring:
+  `AdvancedProxyManager`, `index.ts`, `ConsoleJsonLogger`) ayrı onaylı
+  turlarda mı ele alınsın; (c) Madde #12'nin gerçek wiring'i
+  (`captureState()`/`applyState()`/`applyPreservedState()`'in
+  `StateEnvelope<T>` sarmalaması + ilk migration fonksiyonu) Madde #10/#11
+  persistence turlarından biriyle mi birleştirilsin; (d) Madde #13/#2/#15'in
+  ortak açık takibi olan composition-root/`better-sqlite3` `dbPath` sorusu
+  mu ele alınsın; (e) Madde #25 turunda çıkan açık gözlem (main-entry
+  `catch`'in `process.exitCode` ayarlamaması + gerçek sinyal iletimi/dbus
+  doğrulaması) ayrı bir madde olarak mı açılsın; (f) yeni bulunan
+  stray-`.js` kirliliği (network/security/state katmanları) numaralı bir
+  madde olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı
+  sorusu (bkz. ❓ Cevap Bekleyen Sorular).
 - **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 6** yapıldı — Madde #24 ve
   #25'in tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
   Kararlar ve Kapanan Maddeler Geçmişi'ndeki kopyalar dahil, ayrıca iki eski
@@ -101,6 +141,12 @@
   görünüyor. Ya yorum yanlış etiketlenmiş ya da #17 kısmen zaten çözülmüş ve
   tabloya yansımamış. **Kullanıcıdan yanıt bekleniyor**, #17'nin durumu bu
   yanıt gelmeden değiştirilmedi.
+- **(Yeni) `src/network/AdvancedProxyManager.js`, `src/security/
+  SecretProvider.js`, `src/state/ProxyCredentialStore.js`, `src/state/
+  ProxyHealthStore.js` — stray derlenmiş `.js` dosyaları (Madde #12
+  doğrulaması sırasında bulundu):** Bunlar numaralı bir madde olarak mı
+  açılsın (P2), yoksa `src/types/` kirliliğinde olduğu gibi rastgele bir
+  sonraki turda mı temizlensin? **Kullanıcıdan yanıt bekleniyor.**
 - *(5 adet çözülmüş soru Taşıma 5 ile `session_arşiv.md`'ye taşındı — bkz.
   `TASIMA_5.md`.)*
 
@@ -118,7 +164,6 @@
 |---|---|---|
 | 10 | State kapsamı genişletme (IndexedDB/Cache/SW) | state |
 | 11 | Multi-origin state izolasyonu | state |
-| 12 | State versioning / migration (StateEnvelope) | state |
 | 14 | Telemetry aggregation katmanı | telemetry |
 | 16 | Correlation ID / distributed tracing | telemetry |
 | 28 | Retry budget | policies |
@@ -135,6 +180,12 @@
 | 19 | Retry-After / backoff / jitter | network |
 | 20 | HTTP status observation genişletme (408/425/5xx) | network |
 | 21 | DNS/TLS error mapping | network |
+| — | Stray derlenmiş `.js` kirliliği (`src/network/AdvancedProxyManager.js`,
+    `src/security/SecretProvider.js`, `src/state/ProxyCredentialStore.js`,
+    `src/state/ProxyHealthStore.js`) | network/security/state — Madde #12
+    doğrulaması sırasında bulundu (`src/types/` altındaki benzer kirlilik
+    o turda temizlendi), henüz numaralı bir madde değil, formalize edilip
+    edilmeyeceği kullanıcı kararına bağlı — bkz. Cevap Bekleyen Sorular |
 | 26 | Health/readiness endpoint | engine |
 | 30 | Test piramidi kurulumu | test |
 | 31 | State integrity testleri | test |
@@ -242,6 +293,10 @@
 - **(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
   KAPANDI (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda
   ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik aşımında arşive taşınacak).
+- **(Yeni) Madde #12 — State versioning / migration (StateEnvelope, ilk
+  slice): TAM KAPANDI (tüketicisiz, Session 3), P1 tablosundan kaldırıldı.**
+  Tam ayrıntı yukarıda ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik
+  aşımında arşive taşınacak).
 
 ---
 
