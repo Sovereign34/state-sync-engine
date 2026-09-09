@@ -101,6 +101,40 @@ export class EngineFactory {
   }
 }
 
+/**
+ * (Yeni — Madde #25, izole test edilebilirlik için çıkarıldı) Graceful
+ * shutdown guard mantığı, main-entry closure'ından bağımsız bir fonksiyona
+ * taşındı — `disposeEngine`/`exit` enjekte edilebilir olduğu için gerçek
+ * Playwright/process olmadan `runtime-check-shutdown.ts` ile test edilebilir.
+ * Davranış AYNI: ilk `shutdown()` çağrısı dispose eder ve `exit(0)` çağırır;
+ * sonraki her çağrı (çift sinyal ya da normal-akış-sonrası bir sinyal)
+ * no-op'tur. `markDisposed()`, normal akışın (30 saniyelik bekleme sonu)
+ * kendi dispose'unu yaptığı durumda guard'ı senkronize etmek için var —
+ * `shutdown()` ile aynı disposed bayrağını paylaşıyor.
+ */
+export function createShutdownController(
+  disposeEngine: () => Promise<void>,
+  exit: (code: number) => void = (code) => process.exit(code)
+) {
+  let disposed = false;
+  return {
+    isDisposed: (): boolean => disposed,
+    markDisposed: (): void => {
+      disposed = true;
+    },
+    shutdown: async (signal: 'SIGTERM' | 'SIGINT', logger: ILogger): Promise<void> => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      logger.warn(`${signal} alındı — graceful shutdown başlatılıyor`);
+      await disposeEngine();
+      logger.info('Graceful shutdown tamamlandı.');
+      exit(0);
+    },
+  };
+}
+
 if (require.main === module) {
   // (Yeni — Madde #15) Demo/main-entry bloğu artık düz console.* yerine
   // merkezi ConsoleJsonLogger kullanıyor — diğer katmanlarla tutarlı.
@@ -108,6 +142,31 @@ if (require.main === module) {
 
   (async () => {
     logger.info('Endüstriyel Resilient Session Engine başlatılıyor...');
+
+    // (Yeni — Madde #25) Graceful shutdown: `browser`/`engine` referansları
+    // sinyal handler'ının erişebileceği bu dış scope'ta tutuluyor.
+    // Guard mantığının kendisi artık `createShutdownController()`'da (izole
+    // test edilebilir).
+    let browserRef: Browser | undefined;
+    let engineRef: PersistentStateEngine | undefined;
+
+    const controller = createShutdownController(async () => {
+      // (Madde #25) createProductionEngine dönmeden önce bir sinyal gelirse
+      // browserRef/engineRef hâlâ undefined'dır — bu durumda hiçbir şey
+      // dispose edilmez, browser zaten initialize() içinde henüz tam
+      // kurulmamış olabileceği için erken bir close() denenmez.
+      if (browserRef && engineRef) {
+        await EngineFactory.disposeEngine({ browser: browserRef, engine: engineRef });
+      }
+    });
+
+    process.on('SIGTERM', () => {
+      void controller.shutdown('SIGTERM', logger);
+    });
+    process.on('SIGINT', () => {
+      void controller.shutdown('SIGINT', logger);
+    });
+
     try {
       const { browser, engine } = await EngineFactory.createProductionEngine({
         headless: false,
@@ -127,6 +186,8 @@ if (require.main === module) {
           unauthenticatedUrlPatterns: ['/login', '/signin'] // TODO
         }
       });
+      browserRef = browser;
+      engineRef = engine;
 
       const page = engine.getPage();
       if (page) {
@@ -137,9 +198,14 @@ if (require.main === module) {
       }
 
       // (Madde #24) engine.close()/browser.close() artık ayrı ayrı, korumasız
-      // çağrılmıyor — bkz. EngineFactory.disposeEngine.
-      await EngineFactory.disposeEngine({ browser, engine });
-      logger.info('Oturum başarıyla sonlandırıldı.');
+      // çağrılmıyor. (Madde #25) `controller.isDisposed()` — 30 saniyelik
+      // bekleme sırasında bir sinyal gelip zaten dispose ettiyse burada
+      // tekrar çağrılmaz.
+      if (!controller.isDisposed()) {
+        controller.markDisposed();
+        await EngineFactory.disposeEngine({ browser, engine });
+        logger.info('Oturum başarıyla sonlandırıldı.');
+      }
     } catch (error) {
       logger.error('Kritik hata', {
         error: error instanceof Error ? error.message : String(error),
