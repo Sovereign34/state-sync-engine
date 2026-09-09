@@ -3,8 +3,8 @@
 // konvansiyonuna uyar (runtime-check-observer.ts, runtime-check-logger.ts ile
 // aynı desen) — dummy ILogger + mock disposeEngine/exit ile TEST N/PASS-FAIL
 // satırları basar, process.exitCode ile sonucu bildirir.
-import { createShutdownController } from '../src/index';
-import type { ILogger, LogMeta } from '../src/telemetry/ILogger';
+import { createShutdownController } from './src/index';
+import type { ILogger, LogMeta } from './src/telemetry/ILogger';
 
 let failed = false;
 
