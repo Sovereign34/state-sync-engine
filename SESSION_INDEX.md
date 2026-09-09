@@ -46,20 +46,53 @@
     geçildi) çift `initialize()`'ın throw ettiğini ve çift `close()`'un
     sessizce no-op olduğunu doğruladı — **ikisi de PASS**. Madde P1
     tablosundan kaldırıldı.
+  - **(Yeni) Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI
+    (Session 3).** Guard mantığı, main-entry closure'ından bağımsız,
+    enjekte edilebilir `disposeEngine`/`exit` alan `createShutdownController()`
+    fonksiyonuna çıkarıldı (izole test edilebilirlik için) — `index.ts`'ten
+    export ediliyor. `shutdown(signal, logger)` idempotent: ilk çağrı
+    `disposeEngine()`'i çağırıp `exit(0)` çağırır, sonraki her çağrı
+    (çift sinyal ya da normal-akış-sonrası bir sinyal) no-op'tur.
+    `markDisposed()`, normal akışın (30sn bekleme sonu) kendi dispose'unu
+    yaptığı durumda aynı guard'ı senkronize eder. Main-entry, `process.on
+    ('SIGTERM'|'SIGINT', ...)` ile bu controller'a bağlandı; `browser`/
+    `engine` referansları sinyal handler'ının erişebileceği dış scope'ta
+    tutuluyor, `createProductionEngine()` dönmeden bir sinyal gelirse
+    (referanslar hâlâ `undefined`) hiçbir şey dispose edilmeden no-op geçiliyor.
+    **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
+    **sıfır hata**; (2) kapsam — sadece `index.ts` (main-entry bloğu +
+    yeni export) değişti, `PersistentStateEngine.ts`'e bu turda hiç
+    dokunulmadı; (3) runtime — `runtime-check-shutdown.ts` (repo kökünde,
+    diğer `runtime-check-*.ts` dosyalarıyla aynı konvansiyonda; ilk taslak
+    yanlışlıkla `scripts/` altına konup import yolu kırılmıştı, düzeltildi)
+    ile **4/4 PASS** (ilk shutdown dispose+exit(0), çift sinyal no-op,
+    `markDisposed()` sonrası sinyal no-op, opsiyonel `exit` parametresi).
+    **Kapsam dışı bırakılan açık gözlem (madde değil):** Codespace'te gerçek
+    bir `kill -TERM` denemesinde `chromium.launch()` dbus soket hatasıyla
+    başarısız oldu ve `main-entry`'nin `catch` bloğu bunu "Kritik hata"
+    olarak loglayıp **`process.exitCode` ayarlamadan** (varsayılan 0 ile)
+    çıktı — bu, Madde #25'in kapsamı dışında, main-entry'nin hata yolunda
+    önceden var olan ayrı bir bulgu; gerçek sinyal iletiminin (`npx tsx ... &`
+    ile `$!`'in gerçek node process'i mi yoksa `npx` wrapper'ı mı olduğu)
+    ve Codespace'te headless Chromium'un dbus'suz çalışması gerektiğinin
+    ayrıca doğrulanması gerekiyor — deploy (Fly.io) öncesi ele alınmalı,
+    bu turda yeni bir madde açılmadı. Madde P1 tablosundan kaldırıldı.
 - **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — gerçek
   entegrasyon testi kullanıcı kararıyla ertelenmiş, aktif çalışılmıyor.
-  Fiilen P0'da aktif iş yok. Madde #24'ün kapanmasıyla P1'den seçim daha da
-  daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un ertelenmiş
-  testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi seçilsin (öneri:
-  **#25** Graceful shutdown — Madde #24 ile aynı katmanda ve `disposeEngine`/
-  `close()` üzerine doğrudan inşa edilebilir, ya da **#27** Merkezi
-  immutable configuration — Madde #15'in ertelediği log-level filtreleme ile
-  bağlantılı); (c) Madde #13/#2'nin kapsam dışı bırakılan ortak açık takibi
-  mi ele alınsın — composition-root wiring ve `better-sqlite3` bağımlılığı
-  (üç madde — #13, #2, kısmen #15'in ertelenen TEST 5'i — için aynı
-  composition-root noktasında geçerli, aynı `dbPath` sorusu hâlâ açık).
-  Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu (bkz. ❓ Cevap
-  Bekleyen Sorular).
+  Fiilen P0'da aktif iş yok. Madde #24 ve #25'in kapanmasıyla P1'den seçim
+  daha da daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un
+  ertelenmiş testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi
+  seçilsin (öneri: **#27** Merkezi immutable configuration — Madde #15'in
+  ertelediği log-level filtreleme ile bağlantılı); (c) Madde #13/#2'nin
+  kapsam dışı bırakılan ortak açık takibi mi ele alınsın —
+  composition-root wiring ve `better-sqlite3` bağımlılığı (üç madde —
+  #13, #2, kısmen #15'in ertelenen TEST 5'i — için aynı composition-root
+  noktasında geçerli, aynı `dbPath` sorusu hâlâ açık); (d) Madde #25
+  turunda yüzeye çıkan açık gözlem (main-entry `catch` bloğunun
+  `process.exitCode` ayarlamaması + gerçek sinyal iletiminin/Codespace'te
+  headless Chromium'un dbus bağımlılığının doğrulanmamış olması) ayrı bir
+  madde olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı
+  sorusu (bkz. ❓ Cevap Bekleyen Sorular).
 - **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 5** yapıldı — Madde #22, #13,
   #33, #2, #15'in tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
   Kararlar ve Kapanan Maddeler Geçmişi'ndeki üç kopya dahil) ve 5 adet
@@ -102,7 +135,6 @@
 | 12 | State versioning / migration (StateEnvelope) | state |
 | 14 | Telemetry aggregation katmanı | telemetry |
 | 16 | Correlation ID / distributed tracing | telemetry |
-| 25 | Graceful shutdown (SIGTERM/SIGINT) | engine — artık Madde #24'ün `EngineFactory.disposeEngine()`/`PersistentStateEngine.close()` sözleşmesi üzerine doğrudan inşa edilebilir |
 | 27 | Merkezi immutable configuration | engine — artık Madde #15'in ertelediği log-level filtreleme kararıyla da bağlantılı |
 | 28 | Retry budget | policies |
 | 29 | Circuit breaker (proxy/session/resource) | policies |
@@ -182,6 +214,12 @@
   alanında saklanıyor, `close()` idempotent.** TAM KAPANDI — tam gerekçe/
   doğrulama yukarıda ⚡ ANLIK DURUM'da (henüz taze, arşive taşınmadı).
   `governor.setCommandPort` kaydına BİLİNÇLİ OLARAK dokunulmadı.
+- **(Yeni) Madde #25 — graceful shutdown sözleşmesi: `createShutdownController
+  (disposeEngine, exit?)`, `index.ts`'ten export edilen, `browser`/`engine`
+  bilmeyen (sadece bir `disposeEngine: () => Promise<void>` callback'i alan)
+  jenerik bir guard.** TAM KAPANDI — tam gerekçe/doğrulama yukarıda ⚡ ANLIK
+  DURUM'da. `runtime-check-*.ts` dosyaları repo KÖKÜNDE tutulur (bu turda
+  yanlış konuma konup düzeltilen bir örnek yaşandı — bkz. DERSLER).
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume + resmi Playwright Docker image. Kesinleşmiş
   değil.
@@ -211,6 +249,17 @@
   gerçek bir bug düzeltildi) + `EngineFactory.disposeEngine()`. Üç kanıtla
   doğrulandı: `tsc --noEmit` (tam repo, 0 hata), kapsam-sınırlı diff, `tsx`
   ile runtime smoke-test (çift initialize/close PASS).
+- **(Yeni) Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI
+  (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda ⚡ ANLIK
+  DURUM'da (henüz taze). Kısa özet: guard mantığı `createShutdownController()`
+  olarak izole edilebilir bir fonksiyona çıkarıldı, main-entry `process.on
+  ('SIGTERM'|'SIGINT', ...)` ile buna bağlandı. Üç kanıtla doğrulandı:
+  `tsc --noEmit` (0 hata), kapsam-sınırlı diff (sadece `index.ts`),
+  `runtime-check-shutdown.ts` ile 4/4 PASS. Kapsam dışı bırakılan açık
+  gözlem: main-entry `catch` bloğunun hata durumunda `process.exitCode`
+  ayarlamaması + gerçek OS sinyali iletiminin Codespace'te henüz net
+  doğrulanmamış olması (dbus/chromium launch hatası bu turda ayrıca
+  gözlendi) — yeni madde açılıp açılmayacağı kullanıcı kararına bırakıldı.
 - *(Madde #22, #13, #33, #2, #15'in tam kapanış kayıtları Taşıma 5 ile
   `session_arşiv.md`'ye taşındı — bkz. `TASIMA_5.md`. Kısa referans: hepsi
   TAM KAPANDI, sırasıyla P0/P0/P0/P1/P1 tablolarından kaldırıldı.)*
@@ -296,17 +345,44 @@
   fark edilebilir ama gerçekte HER çağrı noktasında (rotasyon dahil)
   tekrarlanıyor olabilir — kök nedeni (referansın hiç saklanmaması)
   düzeltmeden tek noktaya yama yapmak sorunu tam kapatmaz.
+- **(Yeni — Madde #25 turu)** İzole bir `runtime-check-*.ts` dosyasının
+  konumu, proje konvansiyonuna (repo kökü) uymazsa (örn. bir `scripts/`
+  alt klasörüne konursa) relative import yolları (`../src/...` vs
+  `./src/...`) sessizce kırılır — dosya oluşturulmadan önce mevcut
+  `runtime-check-*` dosyalarının GERÇEK konumu teyit edilmeli, varsayılmamalı.
+- **(Yeni — Madde #25 turu)** Bir guard/controller'ı main-entry closure'ından
+  bağımsız, enjekte edilebilir bağımlılıklarla (`disposeEngine`/`exit`)
+  dışa çıkarmak, gerçek OS sinyali/process/Playwright hiç gerekmeden izole
+  test edilebilirlik sağlar — ama bu, gerçek sinyal İLETİMİNİN (OS →
+  process) ayrıca doğrulanması gerekliliğini ORTADAN KALDIRMAZ, sadece
+  guard MANTIĞINI iki ayrı katmana böler.
+- **(Yeni — Madde #25 turu)** Bir `catch` bloğunun hatayı loglaması,
+  process'in doğru exit code ile çıktığı anlamına gelmez —
+  `process.exitCode` açıkça ayarlanmadıkça Node varsayılan olarak `0` ile
+  çıkabilir, "Kritik hata" logu olsa bile.
 
 ---
 
-*Not (Session 3, bu tur — Taşıma 5 + Madde #24 kapanışı): `PersistentState
+*Not (Session 3, önceki tur — Taşıma 5 + Madde #24 kapanışı): `PersistentState
 Engine.ts`'e `lifecycleState` guard'ı + observer dispose fix'i, `index.ts`'e
 `EngineFactory.disposeEngine()` eklendi — `tsc --noEmit` (tam repo, EXIT
 CODE: 0), kapsam-sınırlı diff ve `tsx` runtime smoke-test (çift
 initialize/close PASS) ile üç kanıtla doğrulandı. **Madde #24 TAM KAPANDI ve
 P1 tablosundan kaldırıldı.** Aynı turda SESSION_INDEX.md 400 satır eşiğini
 dördüncü kez aştığı için Madde #22/#13/#33/#2/#15'in tam metinli kapanış
-anlatıları `TASIMA_5.md` bloğu olarak ayrıca verildi — kullanıcının bunu
-`session_arşiv.md`'nin sonuna eklemesi bekleniyor. P0 tablosunda hâlâ sadece
-**#9** kalıyor (ertelenmiş, aktif çalışılmıyor). Sıradaki adım kullanıcının
+anlatıları `TASIMA_5.md` bloğu olarak ayrıca verildi — `session_arşiv.md`'ye
+eklendiği varsayılıyor (bkz. push kaydı, bir sonraki session'da
+`session_arşiv.md`'nin kendisi görülünce kesin teyit edilecek).*
+
+*Not (Session 3, bu tur — Madde #25 kapanışı): Graceful shutdown guard
+mantığı `createShutdownController()` olarak `index.ts`'ten export edilen
+izole bir fonksiyona çıkarıldı, main-entry `SIGTERM`/`SIGINT` handler'ları
+buna bağlandı. `tsc --noEmit` (tam repo, PASS), kapsam-sınırlı diff (sadece
+`index.ts`) ve `runtime-check-shutdown.ts` (repo kökünde, 4/4 PASS) ile üç
+kanıtla doğrulandı. **Madde #25 TAM KAPANDI ve P1 tablosundan kaldırıldı.**
+Kapsam dışı bırakılan açık gözlem: main-entry `catch` bloğu hata durumunda
+`process.exitCode` ayarlamıyor + gerçek OS sinyal iletimi/Codespace'te
+headless Chromium'un dbus bağımlılığı henüz doğrulanmadı — yeni madde açılıp
+açılmayacağı kullanıcı kararına bırakıldı. P0 tablosunda hâlâ sadece **#9**
+kalıyor (ertelenmiş, aktif çalışılmıyor). Sıradaki adım kullanıcının
 tercihine bağlı (bkz. Sıradaki Öncelik).*
