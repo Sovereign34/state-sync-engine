@@ -14,95 +14,81 @@
 - **Kaynak:** `ARCHITECTURE_ASSESSMENT.md` (36 madde)
 - **Kod durumu:**
   - **Madde #1, #5, #6, #7, #8, #9 (alt-bug), #23, #22, #13, #33, #2, #15 —
-    hepsi TAM KAPANDI.** Tam ayrıntı `session_arşiv.md`'de (Taşıma 1-5,
-    Madde #22/#13/#33/#2/#15 detayı bu turda Taşıma 5 ile arşive taşındı —
-    bkz. bu turda eklenen `TASIMA_5.md` bloğu).
+    hepsi TAM KAPANDI.** Tam ayrıntı `session_arşiv.md`'de (Taşıma 1-5).
   - **Süreç dışı `authValidator` wiring bug'ı — TAM KAPANDI.** Tam ayrıntı
     `session_arşiv.md`'de (Taşıma 2/3).
-  - **(Yeni) Madde #24 — Engine lifecycle (start/stop/dispose): TAM KAPANDI
-    (Session 3).** `lifecycleState: 'created' | 'ready' | 'closing' |
-    'closed'` guard'ı eklendi — `initialize()` artık 'created' dışında throw
-    ediyor (çift initialize engellendi); `handleDecision()` artık 'ready'
-    dışında no-op + warn log yapıyor (governor kararları guard'lı).
-    **GERÇEK BULGU (tespit bu maddeyi açtı):** `attachLifecycleObservers()`
-    her çağrıldığında yeni bir `PlaywrightPageObserver` kuruyordu ama
-    referans hiçbir instance alanında saklanmıyordu — leak sadece `close()`'da
-    değil HER recovery rotasyonunda oluşuyordu. Artık `this.observer`
-    alanında saklanıyor; yeni observer kurulmadan ÖNCE eskisi `stop()`
-    ediliyor. `close()` artık idempotent (ikinci çağrı no-op), `context`/
-    `page` kapanıştan sonra `undefined`'a çekiliyor (stale referans riski
-    kapatıldı — `getPage()`/`getContext()` artık kapalı bir context/page
-    döndürmüyor). `index.ts`'e `EngineFactory.disposeEngine()` eklendi —
-    engine/browser'ı try/finally ile güvenli kapatıyor (önceden
-    `engine.close()` throw ederse `browser.close()` hiç çalışmıyordu),
-    main-entry bloğu buna geçirildi. `governor.setCommandPort` kaydına
-    BİLİNÇLİ OLARAK dokunulmadı (KARAR BİLDİRİMİ'nin kapsam sınırı).
-    **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, gerçek
-    Codespace ortamında, tam repo, **sıfır hata**; (2) kapsam — diff ile
-    değişikliğin sadece onaylanan iki dosyaya (`PersistentStateEngine.ts`,
-    `index.ts`) sınırlı kaldığı teyit edildi, Governor/ProxyManager'a
-    dokunulmadı; (3) runtime — smoke-test (`tsx` ile; `ts-node@10.9.2`'nin
-    Node 24 ile bilinen bir config-okuma uyumsuzluğu nedeniyle `tsx`'e
-    geçildi) çift `initialize()`'ın throw ettiğini ve çift `close()`'un
-    sessizce no-op olduğunu doğruladı — **ikisi de PASS**. Madde P1
-    tablosundan kaldırıldı.
-  - **(Yeni) Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI
-    (Session 3).** Guard mantığı, main-entry closure'ından bağımsız,
-    enjekte edilebilir `disposeEngine`/`exit` alan `createShutdownController()`
-    fonksiyonuna çıkarıldı (izole test edilebilirlik için) — `index.ts`'ten
-    export ediliyor. `shutdown(signal, logger)` idempotent: ilk çağrı
-    `disposeEngine()`'i çağırıp `exit(0)` çağırır, sonraki her çağrı
-    (çift sinyal ya da normal-akış-sonrası bir sinyal) no-op'tur.
-    `markDisposed()`, normal akışın (30sn bekleme sonu) kendi dispose'unu
-    yaptığı durumda aynı guard'ı senkronize eder. Main-entry, `process.on
-    ('SIGTERM'|'SIGINT', ...)` ile bu controller'a bağlandı; `browser`/
-    `engine` referansları sinyal handler'ının erişebileceği dış scope'ta
-    tutuluyor, `createProductionEngine()` dönmeden bir sinyal gelirse
-    (referanslar hâlâ `undefined`) hiçbir şey dispose edilmeden no-op geçiliyor.
+  - **Madde #24 — Engine lifecycle (start/stop/dispose): TAM KAPANDI
+    (Session 3).** Tam ayrıntı artık `session_arşiv.md`'de (Taşıma 6, bkz.
+    bu turda eklenen `TASIMA_6.md` bloğu). Kısa özet: `lifecycleState` guard'ı
+    + idempotent `close()` + observer referans sızıntısı düzeltmesi +
+    `EngineFactory.disposeEngine()`.
+  - **Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI
+    (Session 3).** Tam ayrıntı artık `session_arşiv.md`'de (Taşıma 6). Kısa
+    özet: `createShutdownController()` izole guard fonksiyonu, main-entry
+    `SIGTERM`/`SIGINT`'e bağlandı.
+  - **(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
+    KAPANDI (Session 3).** `src/config/Config.ts` (sözleşme: `Config`,
+    `ProxyConfig`, `ProxyQuarantineConfig`, `ProxyHealthScoreConfig`,
+    `LogLevel`) ve `src/config/loadConfig.ts` (`loadConfig(): Config`)
+    eklendi — HİÇBİR tüketici (`AdvancedProxyManager`, `PersistentStateEngine`,
+    `index.ts`, `ConsoleJsonLogger`) bu turda bağlanmadı, sadece sözleşme +
+    üretim izole edildi (Kural #5, #13/#2/#15'te izlenen "önce sözleşme,
+    sonra ayrı onaylı turlarda wiring" deseniyle aynı). Tüm varsayılanlar
+    `AdvancedProxyManager.ts`'teki mevcut hardcoded değerlerle birebir
+    eşleşiyor (13 alan) — yani `loadConfig()` bağlansa bile davranış
+    DEĞİŞMEZ. Env var'lar `STATE_SYNC_*` prefix'iyle (Madde #13
+    konvansiyonu) okunuyor; geçersiz sayısal veya log-level değeri sessizce
+    varsayılana düşmüyor, throw ediyor (Kural #4). `deepFreeze()` ile
+    runtime'da da immutable.
+    **GERÇEK BULGU (doğrulama sırasında ortaya çıktı, ayrı bir madde değil
+    ama önemli bir ders):** İlk doğrulama turunda `runtime-check-config.ts`
+    "repo köküne konuldu" denmişti ama dosya gerçekte hiç diskte yoktu
+    (`ERR_MODULE_NOT_FOUND`) — sadece sohbette anlatılmış, hiç gerçek
+    artifact olarak verilmemişti (AGENT.md Kural #10'un fiilen ihlali).
+    İkinci bulgu: dosya gerçekten üretilip çalıştırıldığında `deepFreeze()`
+    doğru çalışmasına rağmen (`Object.isFrozen()` dört seviyede de `true`)
+    frozen bir alana atama THROW ETMEDİ — ilk bakışta kod hatası gibi
+    göründü. Kök neden kodda değil ortamdaydı: `tsconfig.json`'da
+    `"module": "node16"` var ama `package.json`'da `"type": "module"` YOK,
+    yani derlenmiş çıktı CommonJS — CJS modülleri varsayılan olarak strict
+    mode'da değildir, bu yüzden frozen property'ye atama THROW ETMEDEN
+    sessizce hiçbir etki yapmaz (spec'e göre beklenen davranış budur).
+    `before === after` (`300000 === 300000`) kontrolüyle gerçek korumanın
+    çalıştığı ayrıca doğrulandı — testten "throw etmeli" şartı çıkarıldı,
+    asıl sözleşme ("değer gerçekten değişmedi") doğrulandı.
     **Doğrulama (üç kanıt):** (1) statik — `npx tsc --noEmit`, tam repo,
-    **sıfır hata**; (2) kapsam — sadece `index.ts` (main-entry bloğu +
-    yeni export) değişti, `PersistentStateEngine.ts`'e bu turda hiç
-    dokunulmadı; (3) runtime — `runtime-check-shutdown.ts` (repo kökünde,
-    diğer `runtime-check-*.ts` dosyalarıyla aynı konvansiyonda; ilk taslak
-    yanlışlıkla `scripts/` altına konup import yolu kırılmıştı, düzeltildi)
-    ile **4/4 PASS** (ilk shutdown dispose+exit(0), çift sinyal no-op,
-    `markDisposed()` sonrası sinyal no-op, opsiyonel `exit` parametresi).
-    **Kapsam dışı bırakılan açık gözlem (madde değil):** Codespace'te gerçek
-    bir `kill -TERM` denemesinde `chromium.launch()` dbus soket hatasıyla
-    başarısız oldu ve `main-entry`'nin `catch` bloğu bunu "Kritik hata"
-    olarak loglayıp **`process.exitCode` ayarlamadan** (varsayılan 0 ile)
-    çıktı — bu, Madde #25'in kapsamı dışında, main-entry'nin hata yolunda
-    önceden var olan ayrı bir bulgu; gerçek sinyal iletiminin (`npx tsx ... &`
-    ile `$!`'in gerçek node process'i mi yoksa `npx` wrapper'ı mı olduğu)
-    ve Codespace'te headless Chromium'un dbus'suz çalışması gerektiğinin
-    ayrıca doğrulanması gerekiyor — deploy (Fly.io) öncesi ele alınmalı,
-    bu turda yeni bir madde açılmadı. Madde P1 tablosundan kaldırıldı.
-- **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — gerçek
-  entegrasyon testi kullanıcı kararıyla ertelenmiş, aktif çalışılmıyor.
-  Fiilen P0'da aktif iş yok. Madde #24 ve #25'in kapanmasıyla P1'den seçim
-  daha da daraldı; sıradaki iş kullanıcının önceliğine bağlı: (a) #9'un
-  ertelenmiş testine şimdi mi dönülsün; (b) P1'den yeni bir madde mi
-  seçilsin (öneri: **#27** Merkezi immutable configuration — Madde #15'in
-  ertelediği log-level filtreleme ile bağlantılı); (c) Madde #13/#2'nin
-  kapsam dışı bırakılan ortak açık takibi mi ele alınsın —
-  composition-root wiring ve `better-sqlite3` bağımlılığı (üç madde —
-  #13, #2, kısmen #15'in ertelenen TEST 5'i — için aynı composition-root
-  noktasında geçerli, aynı `dbPath` sorusu hâlâ açık); (d) Madde #25
-  turunda yüzeye çıkan açık gözlem (main-entry `catch` bloğunun
-  `process.exitCode` ayarlamaması + gerçek sinyal iletiminin/Codespace'te
-  headless Chromium'un dbus bağımlılığının doğrulanmamış olması) ayrı bir
-  madde olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı
-  sorusu (bkz. ❓ Cevap Bekleyen Sorular).
-- **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 5** yapıldı — Madde #22, #13,
-  #33, #2, #15'in tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
-  Kararlar ve Kapanan Maddeler Geçmişi'ndeki üç kopya dahil) ve 5 adet
-  çözülmüş Cevap Bekleyen Soru, `session_arşiv.md`'ye eklenmek üzere ayrı bir
-  `TASIMA_5.md` bloğu olarak verildi (arşivin kendisi yeniden üretilmedi,
-  sadece yeni blok — Kural #11). SESSION_INDEX'te bu maddeler için artık
-  sadece tek satır referans var. **Kullanıcıdan istenen:** `TASIMA_5.md`
-  içeriğini mevcut `session_arşiv.md`'nin sonuna ekle (append) — arşivin
-  şu anki tam hâli bu oturumda hâlâ paylaşılmadığı için Claude bunu kendisi
-  birleştiremedi.
+    sıfır hata; (2) kapsam — sadece `src/config/Config.ts` ve
+    `src/config/loadConfig.ts` eklendi, mevcut hiçbir dosyaya dokunulmadı,
+    hiçbir tüketici bağlanmadı; (3) runtime — `runtime-check-config.ts`
+    (repo kökünde, diğer `runtime-check-*.ts` dosyalarıyla aynı
+    konvansiyonda) ile **5/5 TEST GRUBU PASS** (varsayılanlar, env override,
+    geçersiz sayı → throw, geçersiz log-level → throw, deep-freeze — throw
+    değil "değer gerçekten değişmedi" şartıyla).
+    **Kapsam dışı bırakılan (bilinçli, kullanıcı onaylı):**
+    `AdvancedProxyManager.ts`'in bu config'i kullanması, `index.ts`'in
+    `loadConfig()`'i çağırması, `ConsoleJsonLogger`'ın `logLevel`'e göre
+    filtrelemesi — hiçbiri bu turda yapılmadı, her biri ayrı bir
+    [KARAR BİLDİRİMİ] gerektiren ayrı bir tur (Kural #5).
+- **Sıradaki öncelik:** P0 tablosunda hâlâ sadece **#9** açık — ertelenmiş,
+  aktif çalışılmıyor. Madde #27'nin ilk slice'ının kapanmasıyla P1'den bir
+  madde daha düştü. Sıradaki iş kullanıcının tercihine bağlı: (a) #9'un
+  ertelenmiş entegrasyon testine şimdi mi dönülsün; (b) Madde #27'nin
+  tüketicilere bağlanması (composition-root wiring: `AdvancedProxyManager`,
+  `index.ts`, `ConsoleJsonLogger`) ayrı onaylı turlarda mı ele alınsın;
+  (c) Madde #13/#2/#15'in ortak açık takibi olan composition-root/
+  `better-sqlite3` `dbPath` sorusu mu ele alınsın; (d) Madde #25 turunda
+  çıkan açık gözlem (main-entry `catch`'in `process.exitCode`
+  ayarlamaması + gerçek sinyal iletimi/dbus doğrulaması) ayrı bir madde
+  olarak mı açılsın. Ayrıca hâlâ açık: #9 vs #17 etiket tutarsızlığı sorusu
+  (bkz. ❓ Cevap Bekleyen Sorular).
+- **⚠️ Dosya boyutu notu:** Bu turda **Taşıma 6** yapıldı — Madde #24 ve
+  #25'in tam metinli kapanış anlatıları (ANLIK DURUM, Kritik Teknik
+  Kararlar ve Kapanan Maddeler Geçmişi'ndeki kopyalar dahil, ayrıca iki eski
+  oturum-sonu notu) `session_arşiv.md`'ye eklenmek üzere ayrı bir
+  `TASIMA_6.md` bloğu olarak verildi (arşivin kendisi yeniden üretilmedi,
+  sadece yeni blok — Kural #11). **Kullanıcıdan istenen:** `TASIMA_6.md`
+  içeriğini mevcut `session_arşiv.md`'nin sonuna ekle (append) — Taşıma 5
+  için de bu adım hâlâ teyit edilmedi, ikisi birlikte eklenebilir.
 
 ---
 
@@ -135,7 +121,6 @@
 | 12 | State versioning / migration (StateEnvelope) | state |
 | 14 | Telemetry aggregation katmanı | telemetry |
 | 16 | Correlation ID / distributed tracing | telemetry |
-| 27 | Merkezi immutable configuration | engine — artık Madde #15'in ertelediği log-level filtreleme kararıyla da bağlantılı |
 | 28 | Retry budget | policies |
 | 29 | Circuit breaker (proxy/session/resource) | policies |
 
@@ -166,6 +151,11 @@
 - Repo kökünde `tsconfig.json` (`target: ES2020`, `module: Node16`,
   `moduleResolution: Node16`, `types: ["node"]`, `strict: true`,
   `skipLibCheck: true`, `legacy/` ve test dosyaları `exclude`'da).
+  **(Yeni — Madde #27 turu)** `package.json`'da `"type": "module"` YOK —
+  yani `module: Node16` ile birlikte derlenmiş çıktı fiilen CommonJS'tir,
+  CJS modülleri varsayılan strict mode'da DEĞİLDİR (bu, `Object.freeze()`
+  ihlallerinin sessizce no-op olup throw ETMEMESİNİN kök nedeni — değerin
+  gerçekten korunması bundan etkilenmez, sadece throw davranışı etkilenir).
 - **Domain tiplerinin (SemanticAnomaly/AnomalyScope/GovernorAction/ProxyLease/
   ProxyMetrics/PreservedSessionState/GovernorDecisionEvent/RecoveryCommandPort)
   TEK merkezi kaynağı `src/types/governor-command.types.ts`.**
@@ -209,17 +199,15 @@
 - **Madde #15 — merkezi loglama: `src/telemetry/ILogger.ts` +
   `ConsoleJsonLogger.ts`, opsiyonel constructor enjeksiyonu.** TAM KAPANDI —
   tam gerekçe/doğrulama Taşıma 5'te.
-- **(Yeni) Madde #24 — engine lifecycle sözleşmesi: `lifecycleState:
-  'created'|'ready'|'closing'|'closed'`, observer referansı `this.observer`
-  alanında saklanıyor, `close()` idempotent.** TAM KAPANDI — tam gerekçe/
-  doğrulama yukarıda ⚡ ANLIK DURUM'da (henüz taze, arşive taşınmadı).
-  `governor.setCommandPort` kaydına BİLİNÇLİ OLARAK dokunulmadı.
-- **(Yeni) Madde #25 — graceful shutdown sözleşmesi: `createShutdownController
-  (disposeEngine, exit?)`, `index.ts`'ten export edilen, `browser`/`engine`
-  bilmeyen (sadece bir `disposeEngine: () => Promise<void>` callback'i alan)
-  jenerik bir guard.** TAM KAPANDI — tam gerekçe/doğrulama yukarıda ⚡ ANLIK
-  DURUM'da. `runtime-check-*.ts` dosyaları repo KÖKÜNDE tutulur (bu turda
-  yanlış konuma konup düzeltilen bir örnek yaşandı — bkz. DERSLER).
+- **Madde #24 — engine lifecycle sözleşmesi.** TAM KAPANDI — tam
+  gerekçe/doğrulama artık Taşıma 6'da (`TASIMA_6.md`).
+- **Madde #25 — graceful shutdown sözleşmesi.** TAM KAPANDI — tam
+  gerekçe/doğrulama artık Taşıma 6'da.
+- **(Yeni) Madde #27 — merkezi config sözleşmesi: `src/config/Config.ts` +
+  `src/config/loadConfig.ts`, `STATE_SYNC_*` env prefix konvansiyonu
+  (Madde #13 ile aynı), `deepFreeze()` ile runtime immutability.** TAM
+  KAPANDI (ilk slice, tüketicisiz) — tam gerekçe/doğrulama yukarıda
+  ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik aşımında arşive taşınacak).
 - **(Yeni) Deploy hedefi (süreç kararı, madde dışı) KARARLAŞTIRILDI (aday):
   Fly.io** — persistent volume + resmi Playwright Docker image. Kesinleşmiş
   değil.
@@ -232,37 +220,28 @@
 > #23, süreç dışı `authValidator` wiring bug'ı, Madde #22 ve #33 alt-adım
 > girdileri — `session_arşiv.md`'ye (Taşıma 1-4) TAM olarak taşındı,
 > silinmedi. Ayrıntı için o dosya.
-> **(Yeni — Session 3, Taşıma 5)** SESSION_INDEX.md 400 satır eşiği dördüncü
-> kez aşıldı (Madde #24 kapanışıyla). Bu tur: Madde #22, #13, #33, #2,
-> #15'in TAM METİN kapanış anlatıları (ANLIK DURUM + Kritik Teknik Kararlar +
-> bu bölümdeki üç ayrı kopya) ve 5 adet çözülmüş Cevap Bekleyen Soru, ayrı
-> bir `TASIMA_5.md` bloğu olarak verildi — **kullanıcının bunu mevcut
-> `session_arşiv.md`'nin sonuna eklemesi gerekiyor** (arşivin güncel hâli bu
-> oturumda paylaşılmadığı için Claude tarafında birleştirilemedi). Hiçbir
-> içerik silinmedi, sadece taşındı.
+> **(Session 3, Taşıma 5)** SESSION_INDEX.md 400 satır eşiği dördüncü kez
+> aşıldı (Madde #24 kapanışıyla). Bu tur: Madde #22, #13, #33, #2, #15'in
+> TAM METİN kapanış anlatıları ve 5 adet çözülmüş Cevap Bekleyen Soru, ayrı
+> bir `TASIMA_5.md` bloğu olarak verildi — kullanıcının bunu
+> `session_arşiv.md`'nin sonuna eklemesi gerekiyor.
+> **(Yeni — Session 3, Taşıma 6)** SESSION_INDEX.md 400 satır eşiği beşinci
+> kez aşıldı (Madde #27 kapanışıyla). Bu tur: Madde #24, #25'in TAM METİN
+> kapanış anlatıları (ANLIK DURUM + Kritik Teknik Kararlar + bu bölümdeki
+> kopyalar) ve iki eski oturum-sonu notu, ayrı bir `TASIMA_6.md` bloğu
+> olarak verildi — **kullanıcının bunu mevcut `session_arşiv.md`'nin
+> sonuna eklemesi gerekiyor** (Taşıma 5 ile birlikte, ikisi de henüz
+> teyit edilmedi). Hiçbir içerik silinmedi, sadece taşındı.
 
-- **(Yeni) Madde #24 — Engine lifecycle (start/stop/dispose): TAM KAPANDI
-  (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda ⚡ ANLIK
-  DURUM'da (bu madde henüz taze — bir sonraki eşik aşımında arşive
-  taşınacak). Kısa özet: `lifecycleState` guard'ı + idempotent `close()` +
-  observer referansının saklanması (rotasyon dahil her çağrıda sızıntı veren
-  gerçek bir bug düzeltildi) + `EngineFactory.disposeEngine()`. Üç kanıtla
-  doğrulandı: `tsc --noEmit` (tam repo, 0 hata), kapsam-sınırlı diff, `tsx`
-  ile runtime smoke-test (çift initialize/close PASS).
-- **(Yeni) Madde #25 — Graceful shutdown (SIGTERM/SIGINT): TAM KAPANDI
-  (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda ⚡ ANLIK
-  DURUM'da (henüz taze). Kısa özet: guard mantığı `createShutdownController()`
-  olarak izole edilebilir bir fonksiyona çıkarıldı, main-entry `process.on
-  ('SIGTERM'|'SIGINT', ...)` ile buna bağlandı. Üç kanıtla doğrulandı:
-  `tsc --noEmit` (0 hata), kapsam-sınırlı diff (sadece `index.ts`),
-  `runtime-check-shutdown.ts` ile 4/4 PASS. Kapsam dışı bırakılan açık
-  gözlem: main-entry `catch` bloğunun hata durumunda `process.exitCode`
-  ayarlamaması + gerçek OS sinyali iletiminin Codespace'te henüz net
-  doğrulanmamış olması (dbus/chromium launch hatası bu turda ayrıca
-  gözlendi) — yeni madde açılıp açılmayacağı kullanıcı kararına bırakıldı.
 - *(Madde #22, #13, #33, #2, #15'in tam kapanış kayıtları Taşıma 5 ile
   `session_arşiv.md`'ye taşındı — bkz. `TASIMA_5.md`. Kısa referans: hepsi
   TAM KAPANDI, sırasıyla P0/P0/P0/P1/P1 tablolarından kaldırıldı.)*
+- *(Madde #24, #25'in tam kapanış kayıtları Taşıma 6 ile `session_arşiv.md`'ye
+  taşındı — bkz. `TASIMA_6.md`. Kısa referans: hepsi TAM KAPANDI, P1
+  tablosundan kaldırıldı.)*
+- **(Yeni) Madde #27 — Merkezi immutable configuration (ilk slice): TAM
+  KAPANDI (Session 3), P1 tablosundan kaldırıldı.** Tam ayrıntı yukarıda
+  ⚡ ANLIK DURUM'da (henüz taze, sonraki eşik aşımında arşive taşınacak).
 
 ---
 
@@ -330,59 +309,31 @@
   açık bağımlılığa bağımlı hale getirmek yerine, o bağımlılığı gerektiren
   test/alt-parçayı GEÇİCİ olarak izole edip ayrı bırakmak (Kural #5), farklı
   maddelerin kapanış koşullarının birbirine karışmasını önler.
-- **(Yeni — Madde #24 turu)** Yerel bir `ts-node`/Node.js sürüm uyumsuzluğu
+- **(Madde #24 turu)** Yerel bir `ts-node`/Node.js sürüm uyumsuzluğu
   (`ts-node@10.9.2` + Node 24), çalıştırma zamanında KOD kaynaklıymış gibi
-  görünen bir config-okuma hatası üretebilir (`readConfig`/
-  `findAndReadConfig` aşamasında, kullanıcı kodu hiç çalışmadan patlıyorsa)
-  — `tsc --noEmit` zaten PASS veriyorsa önce araç sürümünden şüphelenilmeli
-  (`tsx` gibi güncel bir alternatifle çapraz doğrulanabilir).
-- **(Yeni — Madde #24 turu)** Bir smoke-test script'inin kendi eksik girdisi
-  (örn. boş proxy havuzu), test edilen koddaki bir hatayla karıştırılabilir
-  — hatanın hangi katmandan geldiği stack trace'teki dosya/satır bilgisiyle
-  ayırt edilmeli, panikle kod suçlanmamalı.
-- **(Yeni — Madde #24 turu)** Bir dispose/guard bug'ı (referans
-  saklanmaması) tespit sırasında sadece tek bir çağrı noktasında (`close()`)
-  fark edilebilir ama gerçekte HER çağrı noktasında (rotasyon dahil)
-  tekrarlanıyor olabilir — kök nedeni (referansın hiç saklanmaması)
+  görünen bir config-okuma hatası üretebilir — `tsc --noEmit` zaten PASS
+  veriyorsa önce araç sürümünden şüphelenilmeli.
+- **(Madde #24 turu)** Bir dispose/guard bug'ı (referans saklanmaması)
+  tespit sırasında sadece tek bir çağrı noktasında fark edilebilir ama
+  gerçekte HER çağrı noktasında tekrarlanıyor olabilir — kök nedeni
   düzeltmeden tek noktaya yama yapmak sorunu tam kapatmaz.
-- **(Yeni — Madde #25 turu)** İzole bir `runtime-check-*.ts` dosyasının
-  konumu, proje konvansiyonuna (repo kökü) uymazsa (örn. bir `scripts/`
-  alt klasörüne konursa) relative import yolları (`../src/...` vs
-  `./src/...`) sessizce kırılır — dosya oluşturulmadan önce mevcut
-  `runtime-check-*` dosyalarının GERÇEK konumu teyit edilmeli, varsayılmamalı.
-- **(Yeni — Madde #25 turu)** Bir guard/controller'ı main-entry closure'ından
-  bağımsız, enjekte edilebilir bağımlılıklarla (`disposeEngine`/`exit`)
-  dışa çıkarmak, gerçek OS sinyali/process/Playwright hiç gerekmeden izole
-  test edilebilirlik sağlar — ama bu, gerçek sinyal İLETİMİNİN (OS →
-  process) ayrıca doğrulanması gerekliliğini ORTADAN KALDIRMAZ, sadece
-  guard MANTIĞINI iki ayrı katmana böler.
-- **(Yeni — Madde #25 turu)** Bir `catch` bloğunun hatayı loglaması,
-  process'in doğru exit code ile çıktığı anlamına gelmez —
-  `process.exitCode` açıkça ayarlanmadıkça Node varsayılan olarak `0` ile
-  çıkabilir, "Kritik hata" logu olsa bile.
-
----
-
-*Not (Session 3, önceki tur — Taşıma 5 + Madde #24 kapanışı): `PersistentState
-Engine.ts`'e `lifecycleState` guard'ı + observer dispose fix'i, `index.ts`'e
-`EngineFactory.disposeEngine()` eklendi — `tsc --noEmit` (tam repo, EXIT
-CODE: 0), kapsam-sınırlı diff ve `tsx` runtime smoke-test (çift
-initialize/close PASS) ile üç kanıtla doğrulandı. **Madde #24 TAM KAPANDI ve
-P1 tablosundan kaldırıldı.** Aynı turda SESSION_INDEX.md 400 satır eşiğini
-dördüncü kez aştığı için Madde #22/#13/#33/#2/#15'in tam metinli kapanış
-anlatıları `TASIMA_5.md` bloğu olarak ayrıca verildi — `session_arşiv.md`'ye
-eklendiği varsayılıyor (bkz. push kaydı, bir sonraki session'da
-`session_arşiv.md`'nin kendisi görülünce kesin teyit edilecek).*
-
-*Not (Session 3, bu tur — Madde #25 kapanışı): Graceful shutdown guard
-mantığı `createShutdownController()` olarak `index.ts`'ten export edilen
-izole bir fonksiyona çıkarıldı, main-entry `SIGTERM`/`SIGINT` handler'ları
-buna bağlandı. `tsc --noEmit` (tam repo, PASS), kapsam-sınırlı diff (sadece
-`index.ts`) ve `runtime-check-shutdown.ts` (repo kökünde, 4/4 PASS) ile üç
-kanıtla doğrulandı. **Madde #25 TAM KAPANDI ve P1 tablosundan kaldırıldı.**
-Kapsam dışı bırakılan açık gözlem: main-entry `catch` bloğu hata durumunda
-`process.exitCode` ayarlamıyor + gerçek OS sinyal iletimi/Codespace'te
-headless Chromium'un dbus bağımlılığı henüz doğrulanmadı — yeni madde açılıp
-açılmayacağı kullanıcı kararına bırakıldı. P0 tablosunda hâlâ sadece **#9**
-kalıyor (ertelenmiş, aktif çalışılmıyor). Sıradaki adım kullanıcının
-tercihine bağlı (bkz. Sıradaki Öncelik).*
+- **(Madde #25 turu)** İzole bir `runtime-check-*.ts` dosyasının konumu,
+  proje konvansiyonuna (repo kökü) uymazsa relative import yolları
+  sessizce kırılır — dosya oluşturulmadan önce mevcut konum teyit edilmeli.
+- **(Madde #25 turu)** Bir `catch` bloğunun hatayı loglaması, process'in
+  doğru exit code ile çıktığı anlamına gelmez — `process.exitCode` açıkça
+  ayarlanmadıkça Node varsayılan olarak `0` ile çıkabilir.
+- **(Yeni — Madde #27 turu)** Bir dosyanın "repo köküne verildi/kondu"
+  şeklindeki bir bildirim, gerçek `ls`/`find` çıktısıyla teyit edilmeden bir
+  sonraki adımda "mevcut" sayılmamalı — sohbet içinde anlatılan bir dosya,
+  diske hiç yazılmamış olabilir (AGENT.md Kural #10'un fiilen ihlali, aynı
+  zamanda "eylem gerçek çıktı olmadan doğrulanmış sayılmaz" dersinin bir
+  örneği daha).
+- **(Yeni — Madde #27 turu)** `Object.freeze()`'in bir property'ye atamayı
+  ENGELLEMESİ (değerin değişmemesi) ile bu atamanın THROW etmesi farklı
+  garantilerdir — ikincisi sadece strict mode'da geçerlidir ve strict/sloppy
+  ayrımı projenin gerçek modül sistemine (`package.json` `"type"`, tsconfig
+  `"module"`) bağlıdır; bir test'in "throw etmeli" varsayımı, projenin
+  fiilen CJS'e mi ESM'e mi derlendiği teyit edilmeden yazılmamalı — asıl
+  doğrulanması gereken sözleşme genelde "değer değişmedi"dir, "throw etti"
+  değil.
