@@ -359,3 +359,364 @@ savunma için gerekli.
 >   `TimeoutError`, `PollingTimeoutError`, `UserCancellationError`
 > - Kapsamlı test suite (createTask retry, poll backoff, timeout,
 >   cancellation, factory validation)
+-----
+
+---
+
+# 📋 TOPLU ÖNERİLER — Sohbet Çıkarımı
+
+> Bu bölüm, mimari danışmanlık sohbetinde dile getirilen tüm önerilerin
+> konsolide halidir. Mevcut `GEMINI_NOTES.md` içeriğiyle çakışmaz, onu
+> tamamlar. Uygulama sırası: Faz 1 (mevcut) → Faz 6-10 (bu dosyada).
+
+---
+
+## 🎯 ANA HEDEF
+
+VFS Global (İtalya + Fransa öncelikli) randevu slotu yakalama + rezervasyon
+otomasyonu. Form-filling, CAPTCHA, OTP, hesap havuzu, proxy yönetimi
+entegre şekilde çalışacak.
+
+---
+
+## 🏗️ GENEL MİMARİ HEDEFİ
+
+```
+[Policy Engine] → [Recovery Manager] → {
+    [Session Engine] | [Proxy Orchestrator] | [State Manager] | [CAPTCHA] | [Form-Filling]
+}
+       ↓                    ↓                    ↓                  ↓              ↓
+[Browser Layer]   [Health+Lease+CB]   [State Store+Versioning]  [Solver]    [Selectors]
+                                            ↓
+                                    [Telemetry (Logs/Metrics/Tracing)]
+```
+
+**İlke:** Site-spesifik bilgi **core engine'e girmez**, adaptör katmanında kalır.
+
+---
+
+## 🌐 FAZ 6 — AĞ KATMANI (TLS / JA3 / JA4)
+
+**Sorun:** Node.js `axios`/`fetch` varsayılan TLS stack'i sabit cipher suite
+kullanır → Cloudflare JA3 hash'inden bot olarak tanır.
+
+**Çözüm:** `impit` (Apify) veya eşdeğeri ile tarayıcı-benzeri TLS imzası.
+
+**Araç adayları:**
+
+| Araç | Dil | Boyut | Bakım |
+|---|---|---|---|
+| `impit` (Apify) | Node (Rust) | ~5-10MB | ✅ Aktif |
+| `curl-impersonate` | C wrapper | Büyük | ⚠️ Bakımsız |
+| `cycletls` | Go subprocess | ~81MB | ⚠️ Zayıf |
+
+**Kritik not:**
+- İki katman ayrı: (a) CAPTCHA solver API çağrıları, (b) hedef site istekleri
+- `AxiosInstance` enjeksiyonu → `HttpClientPort` soyutlamasına çevrilmeli
+- Proxy residential + tarayıcı TLS + `StealthContextBuilder` = Cloudflare %80+ geçiş
+
+---
+
+## 📝 FAZ 8 — FORM-FILLING & SELECTOR ADAPTÖRÜ
+
+**Sorun:** VFS formları site-spesifik, sık değişiyor.
+
+**Çözüm:** `IFormFillingPort` — `AuthValidationPort` ile aynı DI disiplini.
+
+**Teknik:**
+- Selector map **config'den** gelir, koda gömülmez
+- Adımlar: `fill → select → check → upload → submit` (idempotent)
+- Dry-run modu ile bağlantılı
+- Slot bulunduğunda saniyeler içinde çalışmalı
+
+---
+
+## 🕵️ FAZ 7 — CAPTCHA KATMANI
+
+**Sorun:** `CapSolverAdapter` yazıldı ama `PersistentStateEngine`'e entegre değil.
+
+**Çözüm:** Üç parçalı entegrasyon.
+
+### Detector (`IChallengeDetectorPort`)
+- DOM taraması: `<iframe src*="challenges.cloudflare.com">`, `recaptcha`, `hcaptcha`
+- Jenerik — site-spesifik selector yok
+- `CaptchaChallenge` payload'ı döner
+
+### Solver (`ICaptchaSolverPort`)
+- `CapSolverAdapter` mevcut, port adaptörü yazılır
+- Fallback chain: CapSolver → AntiCaptcha → 2Captcha
+- Webhook desteği (opsiyonel)
+
+### Injector (`ITokenInjectorPort`)
+- Turnstile: `input[name="cf-turnstile-response"]` + `dispatchEvent`
+- reCAPTCHA: `textarea[name="g-recaptcha-response"]` + callback
+- hCaptcha: `textarea[name="h-captcha-response"]` + `hcaptcha.execute()`
+
+**Yeni action:** `GovernorAction.SOLVE_CHALLENGE`
+
+**Yeni config alanı:**
+```ts
+readonly captcha: {
+  readonly enabled: boolean;
+  readonly primaryProvider: 'capsolver' | 'anticaptcha' | 'twocaptcha';
+  readonly fallbackChain: string[];
+  readonly apiKeyEnvVar: string;
+  readonly maxSolveTimeMs: number;
+  readonly maxSolveCost: number;
+};
+```
+
+**Uyarı:** CAPTCHA çözümü mevcut context'te yapılır, `make-before-break`
+modeline uymaz — ayrı "mini transaction" gerekir.
+
+---
+
+## 🔐 FAZ 9 — HESAP HAVUZU & KİMLİK YÖNETİMİ
+
+**Sorun:** VFS "e-posta başına randevu limiti" uyguluyor.
+
+**Çözüm:** `AccountPoolManager`.
+
+```ts
+interface AccountPoolManager {
+  acquire(): Promise<AccountLease>;
+  markBanned(accountId: string, reason: string): void;
+  markSuccess(accountId: string): void;
+  getStats(): PoolStats;
+}
+
+interface AccountLease {
+  accountId: string;
+  email: string;
+  password: string;
+  boundProxyId?: string;   // sticky session
+  otpProvider: string;
+  expiresAt: number;
+}
+```
+
+**Kritik:**
+- Her hesap **sabit telefon + sabit e-posta** ile doğar, değişmez
+- Her hesap **kendi cookie/localStorage state'iyle izole**
+- Aynı proxy'den iki farklı hesap çıkmaz → `cross-contamination` riski
+
+---
+
+## 📱 FAZ 9b — OTP HANDLING (KRİTİK GÜNCELLEME)
+
+**Sorun:** VFS OTP iki kanaldan geliyor + portal sürümüne göre değişiyor.
+
+**Gerçek akış (kanıtlanmış):**
+- İlk kayıt: SMS OTP (telefon) + e-posta aktivasyon linki
+- Sonraki login: e-posta OTP
+- Bazı Türkiye portalları: **sadece Türk cep numarasına SMS**
+
+**Çözüm:** İKİ AYRI PORT gerekli:
+
+```ts
+interface ISmsOtpProviderPort {
+  getOtp(phoneNumber: string, timeoutMs: number): Promise<string>;
+}
+
+interface IEmailOtpProviderPort {
+  waitForOtp(email: string, since: number, timeoutMs: number): Promise<string>;
+  waitForActivationLink(email: string, since: number, timeoutMs: number): Promise<string>;
+}
+```
+
+**Sağlayıcı seçenekleri:**
+
+| Kanal | Yöntem | Maliyet | VFS Kabul |
+|---|---|---|---|
+| SMS | Türk cep (fiziksel SIM) | — | ✅ |
+| SMS | SMS-Activate / 5sim | ~$0.5 | ⚠️ Değişken |
+| SMS | Twilio | ~$0.01 | ❌ (sanal numara reddedilir) |
+| E-posta | IMAP | Ücretsiz | ✅ |
+| E-posta | Gmail API | Ücretsiz | ✅ |
+
+**Kritik bulgular:**
+- VFS OTP sistemi **kronik bozuk** — çoğu zaman ulaşmıyor
+- Sık login → hesap ban (kısa → uzun)
+- Telefon numarası **immutable** — değiştirilirse randevu iptal
+
+---
+
+## 🎯 FAZ 4 — SLOT DETECTION & BOOKING ORCHESTRATOR
+
+**Sorun:** VFS slot'ları saniyeler içinde tükeniyor.
+
+**Çözüm:** `GovernorAction.BOOK_SLOT` + adaptive polling.
+
+**Adaptive polling:**
+- Sabit interval = ban riski
+- Yoğun saat (06:00-09:00 TR) daha sık, sakin saatler seyrek
+- `AdaptiveGovernor.THROTTLE` + `Retry-After` altyapısı kullanılır
+
+**XHR intercept:** Slot API endpoint'i doğrudan `fetch` ile sorgulanabilir
+(sayfa render beklemesi yok).
+
+**Race condition:** Slot → booking formu arası süre kritik, form **önceden hazır**.
+
+---
+
+## 🧪 FAZ 10 — DRY-RUN / SİMÜLASYON MODU
+
+**Sorun:** VFS'te test = gerçek rezervasyon = ban riski.
+
+**Çözüm:** `DRY_RUN=true` env var.
+
+**Teknik:**
+- Adapter seviyesinde `shouldCommit()` guard
+- Log'da `[DRY-RUN]` prefix
+- Form doldurma gerçekten yapılır, sadece submit edilmez
+
+---
+
+## 📢 FAZ 10b — BİLDİRİM & TELEMETRİ
+
+**Sorun:** Motor çalışıyor ama sahibi bilmiyor.
+
+**Çözüm:** `INotificationPort` — Telegram/Discord/email webhook.
+
+**Kritik olaylar:**
+- Slot bulundu → anlık
+- Randevu başarılı → özet
+- Ban yendi → hesap havuzuna
+- Proxy havuzu tükendi → alarm
+- HTTP_429 tavan → alarm
+- CAPTCHA çözülemedi → alarm
+
+**Metrikler:** `captcha.solve.success/failed`, `proxy.quarantine.rate`,
+`account.ban.rate`, `slot.detection.rate`.
+
+---
+
+## 🛡️ FAZ 10c — CIRCUIT BREAKER & DOM DEĞİŞİKLİK
+
+**Sorun:** VFS DOM değişince adaptör sonsuz döngü.
+
+**Çözüm:**
+1. **DOM hash check** — kritik element varlığı her commit öncesi
+2. **Circuit breaker** — N ardışık hatada adaptör devre dışı, alarm
+
+---
+
+## 🧾 FAZ 10d — AUDIT TRAIL
+
+**Sorun:** Legal savunma için kanıt zinciri gerekli.
+
+**Çözüm:** Append-only log (SQLite/JSON Lines).
+
+**Alanlar:** `timestamp, accountId, proxyId, action, target, result, cost`.
+
+---
+
+## ⚠️ KRİTİK BULGULAR — VFS'E ÖZEL
+
+### 1. Proxy Değişikliği Session Ortasında YASAK
+
+**Kanıt:**
+- VFS resmi: "IP Restrictions: block suspicious IPs"
+- Şikayetvar: "Farklı internet bağlantılarıyla → 429001"
+- Forum: "3 farklı IP → account locked"
+
+**Sonuç:** `PersistentStateEngine.acquireProxy()` session ortasında çağrılmamalı.
+Sticky session zorunlu: Account ↔ Proxy sabit.
+
+### 2. ROTATE_SESSION_ONLY Aksiyonu VFS'te TEHLİKELİ
+
+**Mimari çelişki:** Mevcut kod `createSessionWithFreshState(preserve=true)`
+çağırıyor → yeni proxy + eski state.
+
+**VFS'te sonuç:** Aynı cookie + farklı IP → `429001 Access Restricted`.
+
+**Çözüm:**
+- 429 → `THROTTLE_AND_RETRY` (aynı proxy, bekle, tekrar dene)
+- 3. denemede hâlâ 429 → `FULL_RECOVERY` (state'siz, yeniden login)
+- `ROTATE_SESSION_ONLY` VFS'te kullanılmaz
+
+### 3. OTP İki Kanallı + Kronik Bozuk
+
+- İlk kayıt: SMS + e-posta linki
+- Login: e-posta (bazen SMS, WhatsApp)
+- VFS OTP sistemi çoğu zaman çalışmıyor
+
+### 4. Türkiye VFS Sadece Türk Numarasına SMS
+
+- Stack Overflow: "only sends codes to Turkish phone numbers"
+- Yabancı sanal numara çalışmıyor
+- Fiziksel Türk SIM veya Türk SMS servisi gerekli
+
+### 5. Hesap Başına Randevu Limiti
+
+- Tek hesapla ölçeklenmez
+- Yüzlerce hesap + her birinin sabit kimliği
+
+### 6. Form ↔ Platform Kimlik Tutarlılığı
+
+- `france-visas` + `VFS Global` aynı numara/e-posta zorunlu
+- Değişiklik → randevu iptal (ücret iade yok) + hesap kilidi
+
+---
+
+## 🗺️ GÜNCELLENMİŞ YOL HARİTASI
+
+| Faz | Başlık | Durum |
+|---|---|---|
+| 1 | Çekirdek Altyapı (P0/P1/P2) | Devam |
+| 2 | Hedef Keşif (Discovery) | Bekliyor |
+| 3 | Adaptör Katmanı (`IResourceAdapter`) | Bekliyor |
+| 4 | Slot Detection & Polling | Bekliyor |
+| 5 | WAF/CAPTCHA + Commit Pipeline | Bekliyor |
+| 6 | TLS/JA3 İmza Yönetimi | Yeni |
+| 7 | CAPTCHA Solver Entegrasyonu | Yeni |
+| 8 | Form-Filling Port + Selector | Yeni |
+| 9 | Hesap Havuzu + OTP Handling | Yeni |
+| 10 | Dry-Run, Bildirim, Audit, CB | Yeni |
+
+---
+
+## 📊 BAŞARI ORANI TAHMİNİ
+
+| Senaryo | Başarı |
+|---|---|
+| Sadece mevcut mimari | %15-25 |
+| + BrightData proxy | %40-50 |
+| + TLS impersonation (`impit`) | %55-65 |
+| + CAPTCHA solver entegrasyonu | %70-75 |
+| + Hesap havuzu + OTP hibrit | %75-85 |
+| + Sürekli bakım (VFS değişir) | %80-90 |
+
+---
+
+## ⚠️ LEGAL & OPERASYONEL UYARILAR
+
+1. **VFS TOS ihlali:** Bot kullanımı yasak. Hesap banı + hukuki risk.
+2. **Ücret iadesi yok:** VFS iptal ederse para geri gelmez.
+3. **Sürekli bakım:** VFS savunmayı 2-4 haftada bir günceller.
+4. **Audit trail:** Legal savunma için zorunlu.
+5. **Deploy öncesi:** TLS + sticky session + OTP hibrit tamamlanmalı.
+
+---
+
+## 🎯 "TAMAMLANDI" KRİTERİ (VFS MVP)
+
+- [ ] Bir VFS hesabıyla login
+- [ ] Randevu sayfası açılıp slot arama
+- [ ] Slot bulunca 30sn içinde rezervasyon
+- [ ] CAPTCHA otomatik geçiş
+- [ ] OTP otomatik/yarı-otomatik geçiş
+- [ ] Ban yiyince hesap değişimi
+- [ ] Başarı oranı ≥ %60 (10 denemede 6 randevu)
+- [ ] Sticky session (proxy sabit kalıyor)
+- [ ] Audit trail kayıtlı
+
+---
+
+## 📌 NOTLAR
+
+- Bu dosya `GEMINI_NOTES.md`'ye ek olarak tutulur
+- `ARCHITECTURE_ASSESSMENT.md` değiştirilmez
+- `SESSION_INDEX.md` aktif çalışma — bu dosya **fikir havuzu**
+- Faz 1 tamamlanınca ilgili başlıklar `KARAR BİLDİRİMİ` formatına dönüştürülüp `SESSION_INDEX.md`'ye taşınır
+- CAPTCHA kodları ayrı dosyada (`GEMINI_NOTES_CAPTCHA_CODE.md`)
