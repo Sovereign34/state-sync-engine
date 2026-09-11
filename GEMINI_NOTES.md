@@ -720,3 +720,499 @@ Sticky session zorunlu: Account ↔ Proxy sabit.
 - `SESSION_INDEX.md` aktif çalışma — bu dosya **fikir havuzu**
 - Faz 1 tamamlanınca ilgili başlıklar `KARAR BİLDİRİMİ` formatına dönüştürülüp `SESSION_INDEX.md`'ye taşınır
 - CAPTCHA kodları ayrı dosyada (`GEMINI_NOTES_CAPTCHA_CODE.md`)
+---
+
+# ⚡ V2 TEKNİK GENİŞLEME KATMANI
+## Reservation Readiness Architecture
+
+> Bu bölüm mevcut PersistentStateEngine, Recovery, Governor ve State Management mimarisini koruyarak yüksek rekabetli rezervasyon ortamlarında tepki süresini azaltmak ve rezervasyon hattını hızlandırmak amacıyla hazırlanmıştır.
+>
+> Bu katman mevcut mimarinin yerine geçmez.
+>
+> Mevcut altyapının üzerine inşa edilir.
+
+---
+
+# 🎯 Temel Tasarım İlkesi
+
+Mevcut mimarinin temel amacı:
+
+- Session Continuity
+- State Persistence
+- Recovery
+- Proxy Safety
+- Identity Isolation
+
+katmanlarını sağlamaktır.
+
+Ancak rezervasyon hattında ek bir gereksinim oluşmaktadır:
+
+> Slot bulunduğunda hazırlanmak yerine,
+> slot bulunmadan önce hazır olmak.
+
+Bu nedenle çekirdek mimarinin üzerine yeni bir hazırlık katmanı eklenmelidir.
+
+---
+
+# 1. Warm Session Architecture
+
+## Sorun
+
+Slot bulunduğu anda:
+
+- Session oluşturma
+- State yükleme
+- Authentication doğrulama
+- Form hazırlama
+
+işlemlerinin başlaması kritik gecikme yaratabilir.
+
+---
+
+## Çözüm
+
+Sürekli hazır bekleyen Warm Session Pool oluşturulmalıdır.
+
+Her session:
+
+- Login olmuş
+- State restore edilmiş
+- Authentication doğrulanmış
+- Proxy eşleşmiş
+- Sağlık kontrolünden geçmiş
+
+durumda beklemelidir.
+
+---
+
+## Yeni Port
+
+```ts
+interface ISessionPoolManager {
+  acquireWarmSession(): Promise<SessionLease>;
+  replenish(): Promise<void>;
+  getPoolHealth(): Promise<PoolHealth>;
+}
+```
+
+---
+
+## Teknik Not
+
+Warm session:
+
+```text
+Session
++
+Account
++
+Proxy
++
+State
+```
+
+dörtlüsünü birlikte temsil eder.
+
+Session havuzu yalnızca tarayıcı değil,
+tam operasyonel bağlamı saklamalıdır.
+
+---
+
+# 2. Multi-Session State Store
+
+## Sorun
+
+Mevcut mimari ağırlıklı olarak tek-session perspektifiyle çalışmaktadır.
+
+Warm Session Pool ve çoklu hesap yönetimi için session bazlı state izolasyonu gerekir.
+
+---
+
+## Çözüm
+
+SessionId tabanlı state store oluşturulmalıdır.
+
+Her session:
+
+- Cookie
+- LocalStorage
+- SessionStorage
+- Auth State
+- Fingerprint Metadata
+
+ile birlikte saklanmalıdır.
+
+---
+
+## Yeni Port
+
+```ts
+interface SessionStateStore {
+  save(sessionId: string): Promise<void>;
+  restore(sessionId: string): Promise<void>;
+  delete(sessionId: string): Promise<void>;
+}
+```
+
+---
+
+## Teknik Not
+
+Bu katman tamamlanmadan:
+
+- Warm Session Pool
+- Parallel Reservation
+- Advanced Account Pool
+
+katmanları güvenli şekilde çalışamaz.
+
+---
+
+# 3. Form Preparation Layer
+
+## Sorun
+
+Form doldurma işlemlerinin slot tespitinden sonra başlaması rezervasyon süresini uzatır.
+
+---
+
+## Çözüm
+
+Form hazırlama işlemleri önceden tamamlanmalıdır.
+
+Slot bulunduğunda yalnızca eksik son bilgiler uygulanmalıdır.
+
+---
+
+## Yeni Port
+
+```ts
+interface IFormPreparationPort {
+  prepare(accountId: string): Promise<FormSnapshot>;
+}
+```
+
+---
+
+## Teknik Not
+
+Amaç:
+
+```text
+Slot bulundu
+↓
+Slot seç
+↓
+Submit
+```
+
+seviyesine yaklaşmaktır.
+
+---
+
+# 4. Slot API Discovery Layer
+
+## Sorun
+
+DOM tabanlı kontrol mekanizmaları gereksiz gecikme yaratabilir.
+
+---
+
+## Çözüm
+
+Discovery aşamasında:
+
+- XHR
+- Fetch
+- Network Response
+
+analizi yapılmalıdır.
+
+Slot endpoint'leri tespit edilmelidir.
+
+---
+
+## Yeni Port
+
+```ts
+interface ISlotApiClient {
+  poll(): Promise<SlotAvailability>;
+}
+```
+
+---
+
+## Teknik Not
+
+Amaç:
+
+- Render beklememek
+- DOM beklememek
+- Gereksiz navigation yapmamak
+
+olmalıdır.
+
+---
+
+# 5. Adaptive Polling Engine
+
+## Sorun
+
+Sabit polling aralıkları verimsizdir.
+
+---
+
+## Çözüm
+
+Polling davranışı sistem koşullarına göre değişmelidir.
+
+Değerlendirilecek sinyaller:
+
+- HTTP 429
+- Retry-After
+- Slot yoğunluğu
+- Başarı oranı
+- Sistem yükü
+- Proxy sağlığı
+
+---
+
+## Yeni Port
+
+```ts
+interface AdaptivePollingController {
+  getNextInterval(): number;
+}
+```
+
+---
+
+## Teknik Not
+
+Bu katman mevcut AdaptiveGovernor ile entegre çalışmalıdır.
+
+Yeni governor yazılmamalıdır.
+
+---
+
+# 6. Warm Session Health Monitor
+
+## Sorun
+
+Hazır bekleyen session'lar zamanla geçersiz hale gelebilir.
+
+---
+
+## Çözüm
+
+Warm session'lar düzenli olarak doğrulanmalıdır.
+
+---
+
+## Kontrol Edilecek Alanlar
+
+- Login durumu
+- Authentication durumu
+- Cookie geçerliliği
+- Proxy sağlığı
+- Session bütünlüğü
+- State tutarlılığı
+
+---
+
+## Yeni Port
+
+```ts
+interface IWarmSessionHealthMonitor {
+  validate(sessionId: string): Promise<void>;
+}
+```
+
+---
+
+## Teknik Not
+
+Sağlıksız session'lar havuzdan çıkarılmalı ve yenileri üretilmelidir.
+
+---
+
+# 7. Reservation Orchestrator
+
+## Sorun
+
+Rezervasyon hattının tek noktadan ilerlemesi hata toleransını düşürür.
+
+---
+
+## Çözüm
+
+Hazır session'ların koordinasyonu ayrı bir orkestrasyon katmanına taşınmalıdır.
+
+---
+
+## Yeni Port
+
+```ts
+interface IReservationOrchestrator {
+  execute(): Promise<ReservationResult>;
+}
+```
+
+---
+
+## Sorumluluklar
+
+- Session seçimi
+- Form hazırlığı kontrolü
+- Slot eşleştirme
+- Commit hazırlığı
+- Sonuç yönetimi
+
+---
+
+# 8. Sticky Session Enforcement
+
+## Sorun
+
+Session sürekliliği yalnızca state ile sağlanamaz.
+
+Kimlik sürekliliği de korunmalıdır.
+
+---
+
+## Çözüm
+
+Her hesap:
+
+```text
+Account
+↓
+Proxy
+↓
+State
+↓
+Session
+```
+
+ilişkisi ile birlikte saklanmalıdır.
+
+---
+
+## Yeni Bileşen
+
+```ts
+interface StickyIdentityManager {
+  bind(accountId: string, proxyId: string): Promise<void>;
+  validate(accountId: string): Promise<boolean>;
+}
+```
+
+---
+
+## Teknik Not
+
+Bu katman:
+
+- Session Continuity
+- Identity Continuity
+- Recovery Safety
+
+için zorunludur.
+
+---
+
+# 9. Reservation Readiness Phase
+
+## Yeni Faz Önerisi
+
+```text
+Faz 1 → Core Infrastructure
+
+Faz 2 → Discovery
+
+Faz 3 → Resource Adapters
+
+Faz 4 → Slot Detection
+
+Faz 4.5 → Reservation Readiness
+
+Faz 5 → Commit Pipeline
+
+Faz 6+ → Operational Extensions
+```
+
+---
+
+## Faz 4.5 Kapsamı
+
+- Session Pool
+- Form Preparation
+- Slot API Client
+- Warm Session Health Monitor
+- Reservation Orchestrator
+
+---
+
+## Amaç
+
+Sistemin:
+
+```text
+Slot bulunduğunda hazırlanması değil,
+
+slot bulunmadan önce hazır olması.
+```
+
+---
+
+# 📌 Önceliklendirme
+
+## Kritik Öncelik
+
+1. Multi-Session State Store
+2. Sticky Identity Model
+3. Account Pool Integration
+4. Lease Management Extension
+5. Recovery Transaction Completion
+
+---
+
+## Sonraki Aşama
+
+6. Warm Session Pool
+7. Form Preparation Layer
+8. Slot API Client
+9. Adaptive Polling Optimization
+10. Reservation Orchestrator
+
+---
+
+# 🎯 Nihai Sonuç
+
+Bu genişleme katmanı mevcut mimarinin temel ilkelerini değiştirmez.
+
+Temel hedef:
+
+```text
+State Continuity
++
+Identity Continuity
++
+Recovery Safety
+```
+
+özelliklerini korurken,
+
+```text
+Reservation Readiness
+```
+
+seviyesini yükseltmektir.
+
+Bu yaklaşım sayesinde sistem:
+
+- Daha hızlı tepki verebilir,
+- Daha hazırlıklı çalışabilir,
+- Daha yüksek operasyonel verimlilik sağlayabilir,
+- Mevcut çekirdek mimariyi bozmadan ölçeklenebilir.
+---
